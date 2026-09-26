@@ -7,3 +7,4 @@ scikit-learn>=1.5,<2.0
 econml>=0.16,<1.0
 dowhy>=0.12,<1.0
 scipy>=1.14,<2.0
+pytest>=7.0

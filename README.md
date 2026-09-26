@@ -66,3 +66,20 @@ The planned input data will have one customer-level observation per row with:
 `discount_amount`, `purchase`, and `revenue`.
 
 Treatment actions are `$0`, `$10`, and `$20`, represented by the discount amount.
+
+## Generate and validate sample data
+
+The committed sample campaign is generated with:
+
+```powershell
+$env:PYTHONPATH = "backend"
+python -m app.data.synthetic_data --out data\sample_campaign_data.csv --n 5000 --seed 42
+```
+
+To validate a CSV from Python:
+
+```python
+from app.data.data_loader import load_csv
+
+campaign = load_csv("data/sample_campaign_data.csv")
+```

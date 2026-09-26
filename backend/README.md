@@ -17,3 +17,12 @@ uvicorn app.main:app --app-dir backend --reload
 
 The API is available at <http://127.0.0.1:8000>. Open
 <http://127.0.0.1:8000/docs> for the interactive OpenAPI documentation.
+
+## Generate sample campaign data
+
+From the repository root:
+
+```powershell
+$env:PYTHONPATH = "backend"
+python -m app.data.synthetic_data --out data\sample_campaign_data.csv --n 5000 --seed 42
+```
