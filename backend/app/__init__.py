@@ -1,0 +1,1 @@
+"""EconoCausal FastAPI application package."""
