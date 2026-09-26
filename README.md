@@ -83,3 +83,54 @@ from app.data.data_loader import load_csv
 
 campaign = load_csv("data/sample_campaign_data.csv")
 ```
+
+## Causal DAG
+
+The DoWhy graph in
+[backend/app/causal/dag.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/dag.py>)
+represents each binary treatment contrast produced by preprocessing:
+
+- `T10`: a `$10` discount versus `$0`
+- `T20`: a `$20` discount versus `$0`
+- `purchase`: the primary causal outcome
+- `revenue`: a downstream outcome of purchase
+- observed confounders: `age`, `income`, `previous_purchases`,
+  `website_visits`, `customer_tenure`, `previous_spend`, and
+  `engagement_score`
+
+The observed customer attributes point to both treatment assignment and
+purchase. This encodes the adjustment set used for identification without
+inventing unsupported relationships. The DAG assumes these features are
+pre-treatment, sufficiently capture common causes, and that both treatment
+levels have overlap. Because the campaign is observational, unmeasured
+confounding, treatment-selection bias, measurement error, and the synthetic
+data-generating assumptions remain limitations; DoWhy identification does not
+prove those assumptions are true.
+
+## Propensity scores and matching
+
+[backend/app/causal/propensity.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/propensity.py>)
+fits a scikit-learn logistic regression for each binary contrast (`$10` vs
+`$0` and `$20` vs `$0`). It returns customer-level propensity scores,
+treated/control summaries, common-support statistics, plotting-ready score
+distributions, and one-to-one nearest-neighbor matches.
+
+Matching balances the observed covariates represented in the propensity model.
+It does not guarantee elimination of unobserved confounding or establish that
+the observational assumptions are correct.
+
+## Double Machine Learning
+
+[backend/app/causal/dml.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/dml.py>)
+fits separate EconML `LinearDML` models for `$10` versus `$0` and `$20` versus
+`$0`. Random-forest outcome nuisance models and logistic treatment nuisance
+models are cross-fitted by EconML. The result includes customer-level `ITE_10`
+or `ITE_20`, their average treatment effect, effect-distribution summaries,
+optional confidence intervals, and model metadata. `train_dml_models` combines
+both outputs into a customer-mappable table with `customer_id`, `ITE_10`, and
+`ITE_20`.
+
+DML relies on consistency, no interference between customers, positivity
+(overlap), and conditional exchangeability given the observed pre-treatment
+features. Cross-fitting reduces overfitting bias in nuisance estimation but
+does not validate these causal assumptions or remove unobserved confounding.
