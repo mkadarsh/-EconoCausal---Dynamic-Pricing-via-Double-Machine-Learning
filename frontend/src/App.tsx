@@ -1,46 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { AppLayout } from "./components/Layout";
+import { AuditPage, CausalPage, CustomerPage, Dashboard, OptimizationPage, UploadPage } from "./pages";
 
-const discounts = [0, 10, 20] as const;
+const pages: Record<string, React.ComponentType<{ navigate: (page: string) => void }>> = {
+  dashboard: Dashboard,
+  upload: UploadPage,
+  causal: CausalPage,
+  customers: CustomerPage,
+  optimization: OptimizationPage,
+  audit: AuditPage,
+};
 
 function App() {
-  const [selectedDiscount, setSelectedDiscount] = useState<(typeof discounts)[number]>(0);
-
-  return (
-    <main className="app-shell">
-      <header>
-        <p className="eyebrow">Causal AI for promotional pricing</p>
-        <h1>EconoCausal</h1>
-        <p className="intro">
-          Understand which discount is likely to cause a purchase, rather than
-          simply predict who might buy.
-        </p>
-      </header>
-
-      <section className="card">
-        <h2>Discount actions</h2>
-        <p className="muted">
-          Causal analysis and budget targeting will appear here in the next MVP
-          iteration.
-        </p>
-        <div className="discount-grid" role="group" aria-label="Discount actions">
-          {discounts.map((discount) => (
-            <button
-              className={selectedDiscount === discount ? "discount active" : "discount"}
-              key={discount}
-              onClick={() => setSelectedDiscount(discount)}
-              type="button"
-            >
-              ${discount}
-              <span>discount</span>
-            </button>
-          ))}
-        </div>
-        <p className="selection">
-          Selected action: <strong>${selectedDiscount} discount</strong>
-        </p>
-      </section>
-    </main>
-  );
+  const [page, setPage] = useState(window.location.hash.slice(1) || "dashboard");
+  useEffect(() => { const onHash = () => setPage(window.location.hash.slice(1) || "dashboard"); window.addEventListener("hashchange", onHash); return () => window.removeEventListener("hashchange", onHash); }, []);
+  const navigate = (next: string) => { window.location.hash = next; setPage(next); };
+  const Page = pages[page] ?? Dashboard;
+  return <AppLayout page={page} navigate={navigate}><Page navigate={navigate} /></AppLayout>;
 }
 
 export default App;
