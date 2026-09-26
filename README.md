@@ -168,6 +168,26 @@ effects take precedence, followed by sure buyers, persuadable customers, and
 unlikely buyers, so overlapping boundary cases are deterministic. These
 segments describe model estimates, not guaranteed individual behavior.
 
+## Budget optimization
+
+[backend/app/optimization/budget_optimizer.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/optimization/budget_optimizer.py>)
+assigns at most one discrete action (`$0`, `$10`, or `$20`) to each customer.
+It solves a mixed-integer optimization problem, maximizing total estimated net
+value under the marketing budget rather than pretending the action space is
+continuous. For each action:
+
+`expected_incremental_revenue = ITE * expected_order_value`
+
+and:
+
+`estimated_net_value = expected_incremental_revenue - discount_cost`
+
+The optimizer returns customer recommendations and budget/value totals. A
+single `discount_cost` column is interpreted as the `$10` cost and twice that
+amount as the `$20` cost; callers can instead provide optional
+`discount_cost_10` and `discount_cost_20` columns for action-specific costs.
+The zero-discount action always has zero cost and zero incremental value.
+
 ## Causal audit and refutation
 
 [backend/app/causal/refutation.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/refutation.py>)
