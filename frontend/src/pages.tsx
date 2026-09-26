@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import Plot from "react-plotly.js";
-import { api, CustomerResult, DataSummary, OptimizationResponse } from "./services/api";
+import { api, CustomerResult, DataSummary, OptimizationResponse, SegmentResponse } from "./services/api";
 import { BudgetInput, ChartCard, CustomerSegmentBadge, DataTable, ErrorState, FileUpload, LoadingState, MetricCard } from "./components/Primitives";
 
 function useRequest<T>(loader: () => Promise<T>, enabled = true) {
@@ -8,13 +8,80 @@ function useRequest<T>(loader: () => Promise<T>, enabled = true) {
   useEffect(() => { if (!enabled) return; setLoading(true); loader().then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false)); }, [enabled]); return { data, error, loading, setData };
 }
 const fmt = (value: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value);
+const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+type StageStatus = "Not Started" | "Running" | "Completed" | "Error";
+
+function WorkflowStage({ index, label, status }: { index: number; label: string; status: StageStatus }) {
+  return <div className={`workflow-step workflow-${status.toLowerCase().split(" ").join("-")}`}>
+    <span>{status === "Completed" ? "✓" : index}</span>
+    <div><strong>{label}</strong><small>{status}</small></div>
+    <em>{status}</em>
+  </div>;
+}
 
 export function Dashboard({ navigate }: { navigate: (page: string) => void }) {
-  const { data, loading, error } = useRequest<DataSummary>(() => api.getSummary());
-  const { data: results } = useRequest<CustomerResult[]>(() => api.getResults(), Boolean(data?.has_data));
-  if (loading) return <LoadingState />; if (error) return <ErrorState message={error} />;
-  return <PageHeader eyebrow="WORKSPACE OVERVIEW" title="Good morning, marketing team" subtitle="Monitor causal performance and make the next promotion decision with confidence." action={<button className="primary-button" onClick={() => navigate("upload")}>＋ New campaign</button>}><div className="metric-grid"><MetricCard label="Customers in campaign" value={fmt(data?.rows ?? 0)} helper="Current dataset" /><MetricCard label="Purchase rate" value={`${((data?.purchase_rate ?? 0) * 100).toFixed(1)}%`} helper="Observed outcome" tone="green" /><MetricCard label="Causal status" value={results ? "Ready" : "Not trained"} helper={results ? "ITE estimates available" : "Train a model to begin"} tone="purple" /><MetricCard label="Treatment arms" value="3" helper="$0 · $10 · $20" tone="amber" /></div><div className="dashboard-grid"><ChartCard title="Causal workflow" subtitle="Your analysis workspace"><div className="workflow-list">{["Load campaign data", "Estimate customer-level effects", "Review uplift and audit", "Optimize the marketing budget"].map((step, i) => <div className="workflow-step" key={step}><span>{i + 1}</span><div><strong>{step}</strong><small>{i === 0 ? data?.has_data ? "Dataset loaded" : "Waiting for data" : "Available after model training"}</small></div></div>)}</div></ChartCard><ChartCard title="Treatment mix" subtitle="Customers by assigned discount"><div className="mix-bars">{Object.entries(data?.treatment_counts ?? {}).map(([key, value]) => <div className="mix-row" key={key}><span>${key}</span><div><i style={{ width: `${Math.min(100, value / Math.max(1, data?.rows ?? 1) * 100)}%` }} /></div><strong>{value}</strong></div>)}</div></ChartCard></div></PageHeader>;
+  const summaryRequest = useRequest<DataSummary>(() => api.getSummary());
+  const resultsRequest = useRequest<CustomerResult[]>(api.getResults, Boolean(summaryRequest.data?.has_data));
+  const segmentsRequest = useRequest<SegmentResponse>(api.getSegments, Boolean(resultsRequest.data));
+  const optimizationRequest = useRequest<OptimizationResponse>(api.getOptimizationResults, Boolean(resultsRequest.data));
+  const auditRequest = useRequest<Record<string, unknown>>(api.getAudit, Boolean(resultsRequest.data));
+  const data = summaryRequest.data;
+  const results = resultsRequest.data ?? [];
+  const modelReady = Boolean(resultsRequest.data);
+  const anyLoading = summaryRequest.loading || (Boolean(data?.has_data) && resultsRequest.loading);
+  if (summaryRequest.loading) return <LoadingState label="Loading dashboard data…" />;
+  if (summaryRequest.error && !data) return <ErrorState message={summaryRequest.error} />;
+
+  const avg = (field: keyof CustomerResult) => results.length ? results.reduce((total, row) => total + Number(row[field]), 0) / results.length : 0;
+  const optimization = optimizationRequest.data?.summary;
+  const stageStatus = (ready: boolean, loading: boolean, error: string, prerequisite: boolean): StageStatus =>
+    loading ? "Running" : error ? "Error" : ready ? "Completed" : prerequisite ? "Not Started" : "Not Started";
+  const datasetStatus: StageStatus = data?.has_data ? "Completed" : "Not Started";
+  const modelStatus = stageStatus(modelReady, resultsRequest.loading, resultsRequest.error, Boolean(data?.has_data));
+  const validationStatus = stageStatus(Boolean(auditRequest.data), auditRequest.loading, auditRequest.error, modelReady);
+  const optimizationStatus = stageStatus(Boolean(optimization), optimizationRequest.loading, optimizationRequest.error, modelReady);
+  const segmentStats = segmentsRequest.data?.statistics ?? [];
+  const showDashboardError = resultsRequest.error && !modelReady && data?.has_data;
+  if (showDashboardError && !results.length) {
+    return <PageHeader eyebrow="WORKSPACE OVERVIEW" title="Good morning, marketing team" subtitle="Load data and train a causal model to activate the dashboard." action={<button className="primary-button" onClick={() => navigate("causal")}>Open causal analysis</button>}><div className="metric-grid"><MetricCard label="Total customers" value={fmt(data?.rows ?? 0)} helper="Current dataset" /><MetricCard label="Customers analyzed" value="—" helper="Model not trained" tone="purple" /></div><ErrorState message={resultsRequest.error} /></PageHeader>;
+  }
+
+  return <PageHeader eyebrow="WORKSPACE OVERVIEW" title="Good morning, marketing team" subtitle="Monitor causal performance and make the next promotion decision with confidence." action={<button className="primary-button" onClick={() => navigate("upload")}>＋ New campaign</button>}>
+    <div className="metric-grid">
+      <MetricCard label="Total customers" value={fmt(data?.rows ?? 0)} helper="Current dataset" />
+      <MetricCard label="Customers analyzed" value={modelReady ? fmt(results.length) : "—"} helper={modelReady ? "Customer-level estimates" : "Train a model to begin"} tone="purple" />
+      <MetricCard label="Average baseline probability" value={modelReady ? pct(avg("baseline_purchase_probability")) : "—"} helper="Estimated under $0" tone="green" />
+      <MetricCard label="Average ITE for $10" value={modelReady ? pct(avg("ITE_10")) : "—"} helper="Incremental purchase probability" tone="amber" />
+      <MetricCard label="Average ITE for $20" value={modelReady ? pct(avg("ITE_20")) : "—"} helper="Incremental purchase probability" tone="purple" />
+      <MetricCard label="Persuadable customers" value={segmentStats.length ? fmt(segmentStats.find((item) => item.segment === "Persuadable")?.customer_count ?? 0) : "—"} helper="Server-classified response segment" tone="green" />
+      <MetricCard label="Marketing budget" value={optimization ? `$${fmt(optimization.total_budget)}` : "—"} helper={optimization ? "Latest optimization run" : "Run optimization to set budget"} />
+      <MetricCard label="Budget utilized" value={optimization ? `$${fmt(optimization.budget_used)}` : "—"} helper={optimization ? `${pct(optimization.total_budget ? optimization.budget_used / optimization.total_budget : 0)} of budget` : "No allocation yet"} tone="amber" />
+      <MetricCard label="Expected incremental revenue" value={optimization ? `$${fmt(optimization.expected_incremental_revenue)}` : "—"} helper="Model-estimated campaign value" tone="green" />
+    </div>
+    <ChartCard title="Workflow status" subtitle="Dataset → Causal Model → Validation → Optimization">
+      <div className="workflow-list workflow-status"><WorkflowStage index={1} label="Dataset" status={datasetStatus} /><WorkflowStage index={2} label="Causal Model" status={modelStatus} /><WorkflowStage index={3} label="Validation" status={validationStatus} /><WorkflowStage index={4} label="Optimization" status={optimizationStatus} /></div>
+      {!modelReady && <div className="info-banner">No causal model is trained yet. Load data, then train the two discount models to populate customer-level charts.</div>}
+      {anyLoading && <p className="muted">Refreshing downstream analysis status…</p>}
+    </ChartCard>
+    {modelReady ? <div className="dashboard-chart-grid">
+      <ChartCard title="Customer treatment-effect distribution" subtitle="Estimated ITE across all analyzed customers">
+        <Plot data={[{ x: results.map((row) => row.ITE_10), type: "histogram", name: "$10 ITE", marker: { color: "#3e78c3" }, opacity: 0.72 }, { x: results.map((row) => row.ITE_20), type: "histogram", name: "$20 ITE", marker: { color: "#8069ca" }, opacity: 0.62 }]} layout={{ ...plotLayout, barmode: "overlay", xaxis: { title: { text: "Incremental purchase probability" } }, yaxis: { title: { text: "Customers" } } }} config={plotConfig} style={{ width: "100%" }} />
+      </ChartCard>
+      <ChartCard title="Customer segment distribution" subtitle="Server-classified response groups">
+        <Plot data={[{ x: segmentStats.map((item) => item.segment), y: segmentStats.map((item) => item.customer_count), type: "bar", marker: { color: ["#2baa78", "#3e78c3", "#d59b3e", "#c65f69", "#8a96aa"] } }]} layout={{ ...plotLayout, xaxis: { tickangle: -25 }, yaxis: { title: { text: "Customers" } } }} config={plotConfig} style={{ width: "100%" }} />
+      </ChartCard>
+      <ChartCard title="Baseline vs discounted purchase probability" subtitle="Average model-based potential outcomes">
+        <Plot data={[{ x: ["Baseline ($0)", "$10 discount", "$20 discount"], y: [avg("baseline_purchase_probability"), avg("purchase_probability_10"), avg("purchase_probability_20")], type: "bar", marker: { color: ["#8a96aa", "#3e78c3", "#8069ca"] }, text: [avg("baseline_purchase_probability"), avg("purchase_probability_10"), avg("purchase_probability_20")].map(pct), textposition: "auto" }]} layout={{ ...plotLayout, yaxis: { title: { text: "Purchase probability" }, tickformat: ".0%" } }} config={plotConfig} style={{ width: "100%" }} />
+      </ChartCard>
+      <ChartCard title="ITE distribution" subtitle="Distribution summary for both discount levels">
+        <Plot data={[{ y: results.map((row) => row.ITE_10), type: "box", name: "$10 ITE", marker: { color: "#3e78c3" }, boxmean: true }, { y: results.map((row) => row.ITE_20), type: "box", name: "$20 ITE", marker: { color: "#8069ca" }, boxmean: true }]} layout={{ ...plotLayout, yaxis: { title: { text: "Incremental purchase probability" } } }} config={plotConfig} style={{ width: "100%" }} />
+      </ChartCard>
+    </div> : <div className="empty-dashboard"><strong>Analysis charts will appear after training</strong><span>Customer effects, segments, and counterfactual probabilities are not available until the causal model completes.</span><button className="secondary-button" onClick={() => navigate("causal")}>Go to causal analysis</button></div>}
+  </PageHeader>;
 }
+
+const plotLayout = { autosize: true, height: 280, margin: { l: 52, r: 16, t: 8, b: 58 }, paper_bgcolor: "transparent", plot_bgcolor: "transparent", font: { size: 10, color: "#758197" }, legend: { orientation: "h" as const } };
+const plotConfig = { displayModeBar: false, responsive: true };
 
 function PageHeader({ eyebrow, title, subtitle, action, children }: { eyebrow: string; title: string; subtitle: string; action?: React.ReactNode; children: React.ReactNode }) { return <><div className="page-heading"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>{children}</>; }
 

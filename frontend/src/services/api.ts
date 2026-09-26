@@ -17,6 +17,17 @@ export interface CustomerResult {
   ITE_20: number;
 }
 
+export interface SegmentStatistic {
+  segment: string;
+  customer_count: number;
+  customer_fraction: number;
+}
+
+export interface SegmentResponse {
+  customers: Array<CustomerResult & { segment: string }>;
+  statistics: SegmentStatistic[];
+}
+
 export interface UpliftCurve {
   discount_amount: number;
   x: number[];
@@ -48,6 +59,7 @@ export interface Api {
   uploadData(file: File): Promise<DataSummary>;
   train(): Promise<{ status: string; models: number[]; rows: number; columns: string[] }>;
   getResults(): Promise<CustomerResult[]>;
+  getSegments(): Promise<SegmentResponse>;
   getCustomer(id: string): Promise<CustomerResult>;
   getUplift(): Promise<Record<string, UpliftCurve>>;
   getPropensity(): Promise<Record<string, unknown>>;
@@ -80,6 +92,7 @@ export const api: Api = {
   },
   train: () => request("/causal/train", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
   getResults: () => request<CustomerResult[]>("/causal/results"),
+  getSegments: () => request<SegmentResponse>("/causal/segments"),
   getCustomer: (id) => request<CustomerResult>(`/causal/customer/${encodeURIComponent(id)}`),
   getUplift: () => request<Record<string, UpliftCurve>>("/causal/uplift"),
   getPropensity: () => request<Record<string, unknown>>("/causal/propensity"),

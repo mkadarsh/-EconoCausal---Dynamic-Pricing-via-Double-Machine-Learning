@@ -12,7 +12,7 @@ from app.api.state import state
 from app.causal.dml import train_dml_models
 from app.causal.propensity import analyze_propensity
 from app.causal.refutation import audit_all_refutations
-from app.causal.uplift import evaluate_all_uplift
+from app.causal.uplift import evaluate_all_uplift, segment_customers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/causal", tags=["causal"])
@@ -62,6 +62,20 @@ def causal_results() -> list[dict]:
     if state.ite_results is None:
         raise HTTPException(status_code=404, detail="Causal results are not available; train models first")
     return _records(state.ite_results)
+
+
+@router.get("/segments", response_model=dict[str, object])
+def customer_segments() -> dict:
+    if state.ite_results is None:
+        raise HTTPException(status_code=404, detail="Causal results are not available; train models first")
+    try:
+        result = segment_customers(state.ite_results)
+        return {
+            "customers": _records(result.customers),
+            "statistics": _records(result.statistics),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/customer/{customer_id}", response_model=CustomerResult)
