@@ -168,6 +168,24 @@ effects take precedence, followed by sure buyers, persuadable customers, and
 unlikely buyers, so overlapping boundary cases are deterministic. These
 segments describe model estimates, not guaranteed individual behavior.
 
+## Causal audit and refutation
+
+[backend/app/causal/refutation.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/refutation.py>)
+provides DoWhy placebo-treatment, random-common-cause, and data-subset
+refutation checks for both `$10` vs `$0` and `$20` vs `$0`. Each result is
+structured for UI display with a test name, original/refuted effect,
+pass status, interpretation, limitation, status, and any execution error.
+
+Because DoWhy's support for directly refuting EconML estimators varies by
+version, this adapter refutes a DoWhy backdoor linear-regression estimate
+constructed from the same observed confounders and binary contrast. That is a
+diagnostic companion to the EconML DML result, not a replacement for it.
+Unsupported or failed refuters are returned as `status="unavailable"` with
+`passed=None`; they are never represented as successful tests. Refutation tests
+are sensitivity diagnostics, not mathematical proof that the causal model is
+correct, that unmeasured confounding is absent, or that the DML model is
+superior.
+
 ## Uplift evaluation
 
 `evaluate_uplift` in
