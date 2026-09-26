@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.schemas.api import CustomerResult, TrainRequest, TrainResponse
 from app.api.state import state
-from app.causal.dml import train_dml_models
+from app.causal.dml import get_model_summary, train_dml_models
 from app.causal.propensity import analyze_propensity
 from app.causal.refutation import audit_all_refutations
 from app.causal.uplift import evaluate_all_uplift, segment_customers
@@ -62,6 +62,20 @@ def causal_results() -> list[dict]:
     if state.ite_results is None:
         raise HTTPException(status_code=404, detail="Causal results are not available; train models first")
     return _records(state.ite_results)
+
+
+@router.get("/summary", response_model=dict[str, object])
+def causal_summary() -> dict:
+    if not state.dml_results or state.ite_results is None:
+        raise HTTPException(status_code=404, detail="Causal model results are not available; train models first")
+    return {
+        "status": "completed",
+        "models": {
+            str(discount): get_model_summary(result)
+            for discount, result in state.dml_results.items()
+        },
+        "rows": len(state.ite_results),
+    }
 
 
 @router.get("/segments", response_model=dict[str, object])

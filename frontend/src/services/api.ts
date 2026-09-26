@@ -28,6 +28,21 @@ export interface SegmentResponse {
   statistics: SegmentStatistic[];
 }
 
+export interface CausalModelSummary {
+  status: string;
+  rows: number;
+  models: Record<string, {
+    discount_amount: number;
+    ate: number;
+    ate_lower: number | null;
+    ate_upper: number | null;
+    treatment_count: number;
+    control_count: number;
+    feature_columns: string[];
+    metadata: Record<string, unknown>;
+  }>;
+}
+
 export interface UpliftCurve {
   discount_amount: number;
   x: number[];
@@ -59,6 +74,7 @@ export interface Api {
   uploadData(file: File): Promise<DataSummary>;
   train(): Promise<{ status: string; models: number[]; rows: number; columns: string[] }>;
   getResults(): Promise<CustomerResult[]>;
+  getCausalSummary(): Promise<CausalModelSummary>;
   getSegments(): Promise<SegmentResponse>;
   getCustomer(id: string): Promise<CustomerResult>;
   getUplift(): Promise<Record<string, UpliftCurve>>;
@@ -92,6 +108,7 @@ export const api: Api = {
   },
   train: () => request("/causal/train", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
   getResults: () => request<CustomerResult[]>("/causal/results"),
+  getCausalSummary: () => request<CausalModelSummary>("/causal/summary"),
   getSegments: () => request<SegmentResponse>("/causal/segments"),
   getCustomer: (id) => request<CustomerResult>(`/causal/customer/${encodeURIComponent(id)}`),
   getUplift: () => request<Record<string, UpliftCurve>>("/causal/uplift"),
