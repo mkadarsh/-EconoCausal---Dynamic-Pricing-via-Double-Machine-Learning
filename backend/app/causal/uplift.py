@@ -30,6 +30,7 @@ SEGMENTS = (
     "Unlikely Buyer",
     "Unclassified Response",
 )
+EVALUATION_COLUMNS = ("customer_id", "treatment", "purchase")
 
 
 class UpliftSegmentationError(ValueError):
@@ -43,6 +44,29 @@ class SegmentationResult:
     customers: pd.DataFrame
     statistics: pd.DataFrame
     config: SegmentationConfig
+
+
+@dataclass(frozen=True)
+class UpliftEvaluation:
+    """Plotly-ready ranked uplift/Qini evaluation for one discount contrast."""
+
+    discount_amount: int
+    x: np.ndarray
+    y: np.ndarray
+    random_baseline: np.ndarray
+    metric: str
+    area_under_curve: float
+    final_incremental_gain: float
+    treated_count: int
+    control_count: int
+
+    @property
+    def plot_data(self) -> dict[str, list[float]]:
+        return {
+            "x": self.x.tolist(),
+            "y": self.y.tolist(),
+            "random_baseline": self.random_baseline.tolist(),
+        }
 
 
 def _validate_config(config: SegmentationConfig) -> None:
@@ -154,4 +178,122 @@ def segment_customers(
         customers=customers,
         statistics=_statistics(customers),
         config=selected_config,
+    )
+
+
+def _evaluation_frame(data: pd.DataFrame, discount_amount: int) -> pd.DataFrame:
+    if discount_amount not in (10, 20):
+        raise UpliftSegmentationError("discount_amount must be 10 or 20")
+    required = set(EVALUATION_COLUMNS) | {f"ITE_{discount_amount}"}
+    missing = sorted(required.difference(data.columns))
+    if missing:
+        raise UpliftSegmentationError(
+            f"Evaluation data is missing required columns: {missing}"
+        )
+    frame = data.loc[:, sorted(required)].copy()
+    frame["treatment"] = pd.to_numeric(frame["treatment"], errors="coerce")
+    frame["purchase"] = pd.to_numeric(frame["purchase"], errors="coerce")
+    frame[f"ITE_{discount_amount}"] = pd.to_numeric(
+        frame[f"ITE_{discount_amount}"], errors="coerce"
+    )
+    if frame.isna().any().any():
+        raise UpliftSegmentationError("Evaluation data contains missing or non-numeric values")
+    allowed_campaign_treatments = {0, 10, 20}
+    if not frame["treatment"].isin(allowed_campaign_treatments).all():
+        raise UpliftSegmentationError(
+            "Evaluation treatment must contain only 0, 10, or 20"
+        )
+    if not frame["purchase"].isin({0, 1}).all():
+        raise UpliftSegmentationError("Evaluation purchase must be binary")
+    if frame["customer_id"].duplicated().any():
+        raise UpliftSegmentationError("Evaluation customer_id values must be unique")
+    frame = frame.loc[frame["treatment"].isin({0, discount_amount})].reset_index(drop=True)
+    if not (frame["treatment"] == discount_amount).any() or not (frame["treatment"] == 0).any():
+        raise UpliftSegmentationError(
+            f"Evaluation requires both treated and control rows for ${discount_amount}"
+        )
+    return frame
+
+
+def evaluate_uplift(
+    data: pd.DataFrame,
+    discount_amount: int,
+    *,
+    metric: str = "uplift",
+) -> UpliftEvaluation:
+    """Evaluate ranked causal effects against observed outcomes.
+
+    Customers are ranked by estimated ITE, then cumulative incremental gain is
+    estimated as treated outcomes minus the control outcome rate scaled by the
+    treated count. This is the standard observational Qini-style construction;
+    it is descriptive and relies on exchangeability, overlap, and stable
+    treatment/outcome definitions. It does not prove model superiority.
+    """
+
+    if metric not in {"uplift", "qini", "cumulative_incremental_gain"}:
+        raise UpliftSegmentationError(
+            "metric must be 'uplift', 'qini', or 'cumulative_incremental_gain'"
+        )
+    frame = _evaluation_frame(data, discount_amount)
+    effect_column = f"ITE_{discount_amount}"
+    frame = frame.sort_values(effect_column, ascending=False, kind="mergesort").reset_index(
+        drop=True
+    )
+    treated = frame["treatment"].eq(discount_amount)
+    control = frame["treatment"].eq(0)
+    control_rate = frame.loc[control, "purchase"].mean()
+    treated_outcomes = (frame["purchase"] * treated).cumsum().to_numpy(dtype=float)
+    treated_seen = treated.cumsum().to_numpy(dtype=float)
+    gain = treated_outcomes - treated_seen * float(control_rate)
+    x = np.arange(1, len(frame) + 1, dtype=float)
+    final_gain = float(gain[-1])
+    random_baseline = final_gain * x / len(frame)
+    area = float(np.trapezoid(gain - random_baseline, x))
+    return UpliftEvaluation(
+        discount_amount=discount_amount,
+        x=x,
+        y=gain,
+        random_baseline=random_baseline,
+        metric=metric,
+        area_under_curve=area,
+        final_incremental_gain=final_gain,
+        treated_count=int(treated.sum()),
+        control_count=int(control.sum()),
+    )
+
+
+def evaluate_all_uplift(data: pd.DataFrame) -> dict[int, UpliftEvaluation]:
+    """Evaluate both supported discount contrasts from one result table."""
+
+    return {
+        discount: evaluate_uplift(
+            data,
+            discount,
+            metric="cumulative_incremental_gain",
+        )
+        for discount in (10, 20)
+    }
+
+
+def evaluate_uplift_curve(data: pd.DataFrame, discount_amount: int) -> UpliftEvaluation:
+    """Return the ranked cumulative uplift curve for one discount contrast."""
+
+    return evaluate_uplift(data, discount_amount, metric="uplift")
+
+
+def evaluate_qini_curve(data: pd.DataFrame, discount_amount: int) -> UpliftEvaluation:
+    """Return the ranked Qini-style cumulative incremental gain curve."""
+
+    return evaluate_uplift(data, discount_amount, metric="qini")
+
+
+def evaluate_cumulative_incremental_gain(
+    data: pd.DataFrame, discount_amount: int
+) -> UpliftEvaluation:
+    """Return cumulative incremental gain and its random-targeting baseline."""
+
+    return evaluate_uplift(
+        data,
+        discount_amount,
+        metric="cumulative_incremental_gain",
     )

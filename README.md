@@ -167,3 +167,22 @@ Classification is rule-based on estimated probabilities and ITEs. Negative
 effects take precedence, followed by sure buyers, persuadable customers, and
 unlikely buyers, so overlapping boundary cases are deterministic. These
 segments describe model estimates, not guaranteed individual behavior.
+
+## Uplift evaluation
+
+`evaluate_uplift` in
+[backend/app/causal/uplift.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/uplift.py>)
+ranks customers by `ITE_10` or `ITE_20` and returns Plotly-ready `x`, `y`, and
+`random_baseline` arrays. The cumulative gain is computed from observed
+treated outcomes minus the observed control outcome rate scaled by the number
+of treated customers encountered in the ranked prefix. This is a standard
+Qini-style observational evaluation and is available for both discount
+contrasts through `evaluate_all_uplift`.
+
+The area reported is the trapezoidal area between the ranked gain curve and
+the random-targeting line; it is descriptive, not a proof of causal-model
+superiority. Interpretation requires consistency, overlap, exchangeability
+given the measured covariates, reliable outcomes, and no interference. In
+particular, a higher curve can reflect sampling noise, model misspecification,
+or residual/unmeasured confounding and should be checked with refutation,
+validation, and holdout evaluation.
