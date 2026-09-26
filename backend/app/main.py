@@ -2,6 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.health import router as health_router
+from app.api.routes.data import router as data_router
+from app.api.routes.causal import router as causal_router
+from app.api.routes.optimization import router as optimization_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -19,3 +22,6 @@ app.add_middleware(
 )
 
 app.include_router(health_router, prefix="/api")
+app.include_router(data_router, prefix="/api")
+app.include_router(causal_router, prefix="/api")
+app.include_router(optimization_router, prefix="/api")

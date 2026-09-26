@@ -5,6 +5,25 @@ will estimate whether a `$10` or `$20` discount causes an incremental purchase
 relative to no discount, identify persuadable customers, and allocate a fixed
 marketing budget.
 
+## REST API workflow
+
+The FastAPI backend keeps the current campaign and analysis outputs in memory
+for the MVP. The frontend can use this sequence:
+
+1. `POST /api/data/generate` or `POST /api/data/upload`
+2. `GET /api/data/summary`
+3. `POST /api/causal/train`
+4. `GET /api/causal/results` or `GET /api/causal/customer/{customer_id}`
+5. `GET /api/causal/uplift`, `GET /api/causal/propensity`, and
+   `GET /api/causal/audit`
+6. `POST /api/optimization/run`
+7. `GET /api/optimization/results`
+
+`GET /api/health` is available independently. The API returns `409` when a
+workflow prerequisite has not run, `422` for invalid data or model inputs, and
+`503` when an optional causal dependency is unavailable. Local React
+development is allowed by the configured CORS origin `http://localhost:5173`.
+
 ## Architecture
 
 The project uses a deliberately small two-part architecture:
