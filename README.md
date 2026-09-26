@@ -152,3 +152,18 @@ mean or correlation. Clipping keeps the approximation in the probability
 domain, but it does not make an ITE a guaranteed individual outcome. The
 probabilities describe model-based expected potential outcomes under the
 assumptions above, not certainty about what a particular customer would do.
+
+## Customer response segmentation
+
+[backend/app/causal/uplift.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/uplift.py>)
+classifies the counterfactual output into descriptive response groups:
+`Persuadable`, `Sure Buyer`, `Unlikely Buyer`, `Potential Negative Response`,
+or `Unclassified Response` when configured rules do not provide enough evidence
+for one of the primary groups. Thresholds are defined in
+[backend/app/causal/uplift_config.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/uplift_config.py>)
+and can be supplied through `SegmentationConfig`.
+
+Classification is rule-based on estimated probabilities and ITEs. Negative
+effects take precedence, followed by sure buyers, persuadable customers, and
+unlikely buyers, so overlapping boundary cases are deterministic. These
+segments describe model estimates, not guaranteed individual behavior.
