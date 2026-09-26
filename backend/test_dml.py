@@ -61,14 +61,39 @@ def test_dml_fit_returns_ite_ate_intervals_and_metadata():
     assert estimate_ate(result) == result.ate
     assert estimate_ite(result).equals(result.ite)
     assert get_model_summary(result)["ite_column"] == "ITE_10"
+    assert result.baseline_purchase_probability.between(0, 1).all()
+    assert result.treatment_purchase_probability.between(0, 1).all()
+    np.testing.assert_allclose(
+        result.treatment_purchase_probability.to_numpy()
+        - result.baseline_purchase_probability.to_numpy(),
+        result.ite.to_numpy(),
+        atol=1e-12,
+    )
 
 
 def test_both_models_preserve_customer_mapping():
     result_10, result_20, ite_table = train_dml_models(_campaign(), n_estimators=20)
 
     assert result_10.ite.size == result_20.ite.size == 120
-    assert ite_table.columns.tolist() == ["customer_id", "ITE_10", "ITE_20"]
+    assert ite_table.columns.tolist() == [
+        "customer_id",
+        "baseline_purchase_probability",
+        "purchase_probability_10",
+        "purchase_probability_20",
+        "ITE_10",
+        "ITE_20",
+    ]
     assert ite_table["customer_id"].is_unique
+    np.testing.assert_allclose(
+        ite_table["purchase_probability_10"] - ite_table["baseline_purchase_probability"],
+        ite_table["ITE_10"],
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        ite_table["purchase_probability_20"] - ite_table["baseline_purchase_probability"],
+        ite_table["ITE_20"],
+        atol=1e-12,
+    )
 
 
 def test_dml_rejects_invalid_discount_and_insufficient_data():

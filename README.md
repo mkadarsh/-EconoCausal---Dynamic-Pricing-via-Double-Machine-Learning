@@ -134,3 +134,21 @@ DML relies on consistency, no interference between customers, positivity
 (overlap), and conditional exchangeability given the observed pre-treatment
 features. Cross-fitting reduces overfitting bias in nuisance estimation but
 does not validate these causal assumptions or remove unobserved confounding.
+
+### Counterfactual purchase probabilities
+
+`train_dml_models` also returns one row per customer with:
+
+- `baseline_purchase_probability`: a RandomForestClassifier estimate of
+  purchase under the observed covariates and `$0`, trained on the control arm.
+- `purchase_probability_10` and `purchase_probability_20`: an MVP
+  counterfactual approximation defined as
+  `clip(baseline_purchase_probability + ITE, 0, 1)`.
+- `ITE_10` and `ITE_20`: EconML causal effect estimates.
+
+This construction is intentionally separate from ordinary predictive
+probabilities: the increment comes from DML, not from a raw treated/control
+mean or correlation. Clipping keeps the approximation in the probability
+domain, but it does not make an ITE a guaranteed individual outcome. The
+probabilities describe model-based expected potential outcomes under the
+assumptions above, not certainty about what a particular customer would do.

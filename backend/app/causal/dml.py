@@ -15,12 +15,12 @@ residualizes treatment and outcome using cross-fitted nuisance models.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
 
 from app.causal.preprocessing import (
@@ -52,6 +52,8 @@ class DMLResult:
     ate: float
     ite_lower: pd.Series | None
     ite_upper: pd.Series | None
+    baseline_purchase_probability: pd.Series
+    treatment_purchase_probability: pd.Series
     ate_lower: float | None
     ate_upper: float | None
     treatment_count: int
@@ -76,6 +78,21 @@ class DMLResult:
             "q75": float(np.quantile(values, 0.75)),
             "max": float(np.max(values)),
         }
+
+    @property
+    def counterfactual_probabilities(self) -> pd.DataFrame:
+        """Return customer-level predictive/counterfactual probability data."""
+
+        return pd.DataFrame(
+            {
+                "customer_id": self.customer_id.to_numpy(),
+                "baseline_purchase_probability": self.baseline_purchase_probability.to_numpy(),
+                f"purchase_probability_{self.discount_amount}": (
+                    self.treatment_purchase_probability.to_numpy()
+                ),
+                self.ite_column: self.ite.to_numpy(),
+            }
+        )
 
 
 def _require_econml() -> Any:
@@ -126,6 +143,22 @@ def _ate_interval(model: Any) -> tuple[float | None, float | None]:
         return None, None
 
 
+def _probability_pair(
+    raw_baseline: np.ndarray, ite_values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep baseline and baseline-plus-effect inside [0, 1] exactly."""
+
+    lower = max(0.0, float(-np.min(ite_values)))
+    upper = min(1.0, float(1.0 - np.max(ite_values)))
+    if lower > upper:
+        raise DMLError(
+            "DML effects cannot be combined with a valid probability baseline; "
+            "effect estimates span more than the probability domain"
+        )
+    baseline = np.clip(raw_baseline, lower, upper)
+    return baseline, baseline + ite_values
+
+
 def train_dml_model(
     campaign: pd.DataFrame | PreprocessedCampaign,
     discount_amount: int,
@@ -154,6 +187,12 @@ def train_dml_model(
         n_jobs=-1,
     )
     model_t = LogisticRegression(max_iter=1000, random_state=random_state)
+    baseline_model = RandomForestClassifier(
+        n_estimators=n_estimators,
+        min_samples_leaf=5,
+        random_state=random_state,
+        n_jobs=-1,
+    )
     model = estimator_class(
         model_y=model_y,
         model_t=model_t,
@@ -169,6 +208,20 @@ def train_dml_model(
         )
         ite_values = np.asarray(model.effect(prepared.X), dtype=float).reshape(-1)
         ate = float(np.mean(ite_values))
+        control_mask = dataset.T.to_numpy(dtype=int) == 0
+        if np.unique(dataset.Y.to_numpy()[control_mask]).size < 2:
+            raise DMLError(
+                f"${discount_amount} control outcomes must contain both purchase classes "
+                "to estimate baseline probabilities"
+            )
+        baseline_model.fit(
+            dataset.X.loc[control_mask],
+            dataset.Y.to_numpy(dtype=int)[control_mask],
+        )
+        raw_baseline_values = baseline_model.predict_proba(prepared.X)[:, 1]
+        baseline_values, treatment_probability_values = _probability_pair(
+            raw_baseline_values, ite_values
+        )
     except (ValueError, TypeError, RuntimeError) as exc:
         raise DMLError(
             f"EconML could not fit the ${discount_amount} vs $0 DML model: {exc}"
@@ -182,6 +235,11 @@ def train_dml_model(
         "treatment": f"${discount_amount} discount vs $0",
         "nuisance_model_y": model_y.__class__.__name__,
         "nuisance_model_t": model_t.__class__.__name__,
+        "baseline_probability_model": baseline_model.__class__.__name__,
+        "probability_approximation": (
+            "baseline is a control-arm predictive probability; treatment probability "
+            "is baseline plus EconML ITE; baseline is constrained so both remain in [0, 1]"
+        ),
         "crossfit_folds": cv,
         "random_state": random_state,
         "n_estimators": n_estimators,
@@ -199,6 +257,13 @@ def train_dml_model(
         ),
         ite_upper=(
             pd.Series(upper, name=f"ITE_{discount_amount}_upper") if upper is not None else None
+        ),
+        baseline_purchase_probability=pd.Series(
+            baseline_values, name="baseline_purchase_probability"
+        ),
+        treatment_purchase_probability=pd.Series(
+            treatment_probability_values,
+            name=f"purchase_probability_{discount_amount}",
         ),
         ate_lower=ate_lower,
         ate_upper=ate_upper,
@@ -252,6 +317,10 @@ def get_model_summary(model_result: DMLResult) -> dict[str, Any]:
         "ate_upper": model_result.ate_upper,
         "ite_column": model_result.ite_column,
         "treatment_effect_distribution": model_result.treatment_effect_distribution,
+        "probability_columns": [
+            "baseline_purchase_probability",
+            f"purchase_probability_{model_result.discount_amount}",
+        ],
     }
 
 
@@ -270,9 +339,34 @@ def train_dml_models(
     result_20 = train_dml_model(
         campaign, 20, random_state=random_state, cv=cv, n_estimators=n_estimators
     )
+    shared_baseline, _ = _probability_pair(
+        result_10.baseline_purchase_probability.to_numpy(),
+        np.concatenate([result_10.ite.to_numpy(), result_20.ite.to_numpy()]),
+    )
+    result_10 = replace(
+        result_10,
+        baseline_purchase_probability=pd.Series(
+            shared_baseline, name="baseline_purchase_probability"
+        ),
+        treatment_purchase_probability=pd.Series(
+            shared_baseline + result_10.ite.to_numpy(), name="purchase_probability_10"
+        ),
+    )
+    result_20 = replace(
+        result_20,
+        baseline_purchase_probability=pd.Series(
+            shared_baseline, name="baseline_purchase_probability"
+        ),
+        treatment_purchase_probability=pd.Series(
+            shared_baseline + result_20.ite.to_numpy(), name="purchase_probability_20"
+        ),
+    )
     ite_table = pd.DataFrame(
         {
             "customer_id": result_10.customer_id,
+            "baseline_purchase_probability": result_10.baseline_purchase_probability.to_numpy(),
+            "purchase_probability_10": result_10.treatment_purchase_probability.to_numpy(),
+            "purchase_probability_20": result_20.treatment_purchase_probability.to_numpy(),
             "ITE_10": result_10.ite.to_numpy(),
             "ITE_20": result_20.ite.to_numpy(),
         }
