@@ -12,7 +12,12 @@ from app.api.state import state
 from app.causal.dml import get_model_summary, train_dml_models
 from app.causal.propensity import analyze_propensity
 from app.causal.refutation import audit_all_refutations
-from app.causal.uplift import evaluate_all_uplift, segment_customers
+from app.causal.uplift import (
+    evaluate_cumulative_incremental_gain,
+    evaluate_qini_curve,
+    evaluate_uplift_curve,
+    segment_customers,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/causal", tags=["causal"])
@@ -109,11 +114,28 @@ def uplift_results() -> dict:
         raise HTTPException(status_code=404, detail="Causal results are not available; train models first")
     frame = campaign.merge(state.ite_results[["customer_id", "ITE_10", "ITE_20"]], on="customer_id")
     try:
-        evaluations = evaluate_all_uplift(frame)
-        return {str(discount): {"discount_amount": value.discount_amount, **value.plot_data,
-                                "metric": value.metric, "area_under_curve": value.area_under_curve,
-                                "final_incremental_gain": value.final_incremental_gain}
-                for discount, value in evaluations.items()}
+        response: dict[str, object] = {}
+        for discount in (10, 20):
+            curves = {
+                "uplift": evaluate_uplift_curve(frame, discount),
+                "qini": evaluate_qini_curve(frame, discount),
+                "cumulative_incremental_gain": evaluate_cumulative_incremental_gain(frame, discount),
+            }
+            response[str(discount)] = {
+                "discount_amount": discount,
+                "curves": {
+                    name: {
+                        **evaluation.plot_data,
+                        "metric": evaluation.metric,
+                        "area_under_curve": evaluation.area_under_curve,
+                        "final_incremental_gain": evaluation.final_incremental_gain,
+                        "treated_count": evaluation.treated_count,
+                        "control_count": evaluation.control_count,
+                    }
+                    for name, evaluation in curves.items()
+                },
+            }
+        return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

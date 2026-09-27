@@ -51,6 +51,17 @@ export interface UpliftCurve {
   metric: string;
   area_under_curve: number;
   final_incremental_gain: number;
+  treated_count: number;
+  control_count: number;
+}
+
+export interface UpliftEvaluation {
+  discount_amount: number;
+  curves: {
+    uplift: UpliftCurve;
+    qini: UpliftCurve;
+    cumulative_incremental_gain: UpliftCurve;
+  };
 }
 
 export interface OptimizationSummary {
@@ -77,7 +88,7 @@ export interface Api {
   getCausalSummary(): Promise<CausalModelSummary>;
   getSegments(): Promise<SegmentResponse>;
   getCustomer(id: string): Promise<CustomerResult>;
-  getUplift(): Promise<Record<string, UpliftCurve>>;
+  getUplift(): Promise<Record<string, UpliftEvaluation>>;
   getPropensity(): Promise<Record<string, unknown>>;
   getAudit(): Promise<Record<string, unknown>>;
   runOptimization(budget: number, expectedOrderValue?: number): Promise<OptimizationResponse>;
@@ -111,7 +122,7 @@ export const api: Api = {
   getCausalSummary: () => request<CausalModelSummary>("/causal/summary"),
   getSegments: () => request<SegmentResponse>("/causal/segments"),
   getCustomer: (id) => request<CustomerResult>(`/causal/customer/${encodeURIComponent(id)}`),
-  getUplift: () => request<Record<string, UpliftCurve>>("/causal/uplift"),
+  getUplift: () => request<Record<string, UpliftEvaluation>>("/causal/uplift"),
   getPropensity: () => request<Record<string, unknown>>("/causal/propensity"),
   getAudit: () => request<Record<string, unknown>>("/causal/audit"),
   runOptimization: (budget, expectedOrderValue = 100) =>
