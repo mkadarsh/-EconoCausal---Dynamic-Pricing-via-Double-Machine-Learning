@@ -97,14 +97,36 @@ def customer_segments() -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get("/customer/{customer_id}", response_model=CustomerResult)
-def customer_result(customer_id: str) -> CustomerResult:
+@router.get("/customer/{customer_id}", response_model=dict[str, object])
+def customer_result(customer_id: str) -> dict:
     if state.ite_results is None:
         raise HTTPException(status_code=404, detail="Causal results are not available; train models first")
     match = state.ite_results[state.ite_results["customer_id"].astype(str) == customer_id]
     if match.empty:
         raise HTTPException(status_code=404, detail=f"Customer '{customer_id}' was not found")
-    return CustomerResult(**_records(match)[0])
+    result = _records(match)[0]
+    campaign = _require_campaign()
+    profile_match = campaign[campaign["customer_id"].astype(str) == customer_id]
+    profile = _records(profile_match)[0] if not profile_match.empty else {}
+    segment = segment_customers(state.ite_results).customers
+    segment_match = segment[segment["customer_id"].astype(str) == customer_id]
+    segment_name = str(segment_match.iloc[0]["segment"]) if not segment_match.empty else None
+    recommendation = None
+    if state.optimization_result is not None:
+        recommendations = state.optimization_result.recommendations
+        rec_match = recommendations[recommendations["customer_id"].astype(str) == customer_id]
+        if not rec_match.empty:
+            recommendation = _records(rec_match)[0]
+    return {
+        "customer": result,
+        "profile": {
+            "previous_purchases": profile.get("previous_purchases"),
+            "previous_spend": profile.get("previous_spend"),
+            "engagement_score": profile.get("engagement_score"),
+        },
+        "segment": segment_name,
+        "recommendation": recommendation,
+    }
 
 
 @router.get("/uplift", response_model=dict[str, object])

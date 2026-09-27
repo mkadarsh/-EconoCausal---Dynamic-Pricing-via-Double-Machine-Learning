@@ -16,6 +16,12 @@ export interface CustomerResult {
   ITE_10: number;
   ITE_20: number;
 }
+export interface CustomerDetail {
+  customer: CustomerResult;
+  profile: { previous_purchases: number; previous_spend: number; engagement_score: number };
+  segment: string | null;
+  recommendation: { recommended_discount: number } | null;
+}
 
 export interface SegmentStatistic {
   segment: string;
@@ -87,7 +93,7 @@ export interface Api {
   getResults(): Promise<CustomerResult[]>;
   getCausalSummary(): Promise<CausalModelSummary>;
   getSegments(): Promise<SegmentResponse>;
-  getCustomer(id: string): Promise<CustomerResult>;
+  getCustomer(id: string): Promise<CustomerDetail>;
   getUplift(): Promise<Record<string, UpliftEvaluation>>;
   getPropensity(): Promise<Record<string, unknown>>;
   getAudit(): Promise<Record<string, unknown>>;
@@ -121,7 +127,7 @@ export const api: Api = {
   getResults: () => request<CustomerResult[]>("/causal/results"),
   getCausalSummary: () => request<CausalModelSummary>("/causal/summary"),
   getSegments: () => request<SegmentResponse>("/causal/segments"),
-  getCustomer: (id) => request<CustomerResult>(`/causal/customer/${encodeURIComponent(id)}`),
+  getCustomer: (id) => request<CustomerDetail>(`/causal/customer/${encodeURIComponent(id)}`),
   getUplift: () => request<Record<string, UpliftEvaluation>>("/causal/uplift"),
   getPropensity: () => request<Record<string, unknown>>("/causal/propensity"),
   getAudit: () => request<Record<string, unknown>>("/causal/audit"),
