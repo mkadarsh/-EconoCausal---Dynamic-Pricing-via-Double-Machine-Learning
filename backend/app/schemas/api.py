@@ -38,6 +38,7 @@ class OptimizationRequest(BaseModel):
     expected_order_value: float = Field(default=100.0, ge=0)
     discount_cost_10: float = Field(default=10.0, ge=0)
     discount_cost_20: float = Field(default=20.0, ge=0)
+    max_customers: int | None = Field(default=None, ge=0)
 
 
 class ErrorResponse(BaseModel):

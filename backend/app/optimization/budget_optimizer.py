@@ -192,7 +192,9 @@ def calculate_campaign_summary(
     )
 
 
-def optimize_campaign(data: pd.DataFrame, budget: float) -> OptimizationResult:
+def optimize_campaign(
+    data: pd.DataFrame, budget: float, max_customers: int | None = None
+) -> OptimizationResult:
     """Allocate at most one discrete action per customer under ``budget``.
 
     The MILP has one binary variable for each customer/action pair. Its
@@ -202,17 +204,22 @@ def optimize_campaign(data: pd.DataFrame, budget: float) -> OptimizationResult:
     """
 
     total_budget = validate_budget(budget)
+    if max_customers is not None and (max_customers < 0 or int(max_customers) != max_customers):
+        raise BudgetOptimizationError("max_customers must be a non-negative integer")
     campaign = _validate_input(data)
     costs, incremental_revenue, net_value = _build_options(campaign)
     customers, action_count = len(campaign), 3
     variable_count = customers * action_count
     objective = -net_value.ravel()
-    constraint_matrix = lil_matrix((customers + 1, variable_count), dtype=float)
+    target_limit = customers if max_customers is None else min(int(max_customers), customers)
+    constraint_matrix = lil_matrix((customers + 2, variable_count), dtype=float)
     for customer in range(customers):
         constraint_matrix[customer, customer * action_count : (customer + 1) * action_count] = 1
     constraint_matrix[customers, :] = costs.ravel()
-    lower = np.r_[np.ones(customers), -np.inf]
-    upper = np.r_[np.ones(customers), total_budget]
+    constraint_matrix[customers + 1, 1::action_count] = 1
+    constraint_matrix[customers + 1, 2::action_count] = 1
+    lower = np.r_[np.ones(customers), -np.inf, -np.inf]
+    upper = np.r_[np.ones(customers), total_budget, target_limit]
     try:
         solution = milp(
             c=objective,

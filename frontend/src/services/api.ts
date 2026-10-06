@@ -97,7 +97,7 @@ export interface Api {
   getUplift(): Promise<Record<string, UpliftEvaluation>>;
   getPropensity(): Promise<Record<string, unknown>>;
   getAudit(): Promise<Record<string, unknown>>;
-  runOptimization(budget: number, expectedOrderValue?: number): Promise<OptimizationResponse>;
+  runOptimization(budget: number, expectedOrderValue?: number, maxCustomers?: number): Promise<OptimizationResponse>;
   getOptimizationResults(): Promise<OptimizationResponse>;
 }
 
@@ -131,11 +131,11 @@ export const api: Api = {
   getUplift: () => request<Record<string, UpliftEvaluation>>("/causal/uplift"),
   getPropensity: () => request<Record<string, unknown>>("/causal/propensity"),
   getAudit: () => request<Record<string, unknown>>("/causal/audit"),
-  runOptimization: (budget, expectedOrderValue = 100) =>
+  runOptimization: (budget, expectedOrderValue = 100, maxCustomers) =>
     request<OptimizationResponse>("/optimization/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ budget, expected_order_value: expectedOrderValue }),
+      body: JSON.stringify({ budget, expected_order_value: expectedOrderValue, max_customers: maxCustomers ?? null }),
     }),
   getOptimizationResults: () => request<OptimizationResponse>("/optimization/results"),
 };
