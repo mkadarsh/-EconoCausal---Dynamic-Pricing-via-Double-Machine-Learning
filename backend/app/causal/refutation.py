@@ -16,7 +16,7 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
-from app.causal.dag import create_causal_graph
+from app.causal.dag import get_dowhy_model
 from app.causal.preprocessing import FEATURE_COLUMNS, preprocess_campaign
 
 SUPPORTED_DISCOUNTS: Final[frozenset[int]] = frozenset({10, 20})
@@ -172,7 +172,7 @@ def audit_refutations(
         raise RefutationError("subset_fraction must be between 0 and 1")
     binary = _binary_data(data, discount_amount)
     try:
-        model_class = _require_dowhy()
+        _require_dowhy()
     except ImportError as exc:
         limitations = (
             "DoWhy is not installed; no refutation was run. Refutation tests "
@@ -195,11 +195,10 @@ def audit_refutations(
                 for _, test_name in REFUTER_METHODS
             ),
         )
-    model = model_class(
-        data=binary,
+    model = get_dowhy_model(
+        binary,
         treatment="binary_treatment",
         outcome="purchase",
-        graph=create_causal_graph("binary_treatment", "purchase"),
     )
     try:
         from app.causal.dag import identify_estimand

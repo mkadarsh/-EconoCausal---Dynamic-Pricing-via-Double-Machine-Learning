@@ -148,12 +148,12 @@ def _probability_pair(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Keep baseline and baseline-plus-effect inside [0, 1] exactly."""
 
-    lower = max(0.0, float(-np.min(ite_values)))
-    upper = min(1.0, float(1.0 - np.max(ite_values)))
-    if lower > upper:
+    lower = np.maximum(0.0, -ite_values)
+    upper = np.minimum(1.0, 1.0 - ite_values)
+    if np.any(lower > upper):
         raise DMLError(
             "DML effects cannot be combined with a valid probability baseline; "
-            "effect estimates span more than the probability domain"
+            "at least one individual effect lies outside [-1, 1]"
         )
     baseline = np.clip(raw_baseline, lower, upper)
     return baseline, baseline + ite_values
@@ -206,7 +206,8 @@ def train_dml_model(
             dataset.T.to_numpy(dtype=int),
             X=dataset.X,
         )
-        ite_values = np.asarray(model.effect(prepared.X), dtype=float).reshape(-1)
+        raw_ite_values = np.asarray(model.effect(prepared.X), dtype=float).reshape(-1)
+        ite_values = np.clip(raw_ite_values, -1.0, 1.0)
         ate = float(np.mean(ite_values))
         control_mask = dataset.T.to_numpy(dtype=int) == 0
         if np.unique(dataset.Y.to_numpy()[control_mask]).size < 2:
@@ -244,6 +245,7 @@ def train_dml_model(
         "random_state": random_state,
         "n_estimators": n_estimators,
         "features": list(prepared.feature_columns),
+        "ite_probability_clipped_count": int(np.sum(np.not_equal(raw_ite_values, ite_values))),
         "observed_confounding_adjustment": True,
     }
     return DMLResult(
@@ -339,10 +341,17 @@ def train_dml_models(
     result_20 = train_dml_model(
         campaign, 20, random_state=random_state, cv=cv, n_estimators=n_estimators
     )
-    shared_baseline, _ = _probability_pair(
-        result_10.baseline_purchase_probability.to_numpy(),
-        np.concatenate([result_10.ite.to_numpy(), result_20.ite.to_numpy()]),
-    )
+    raw_baseline = result_10.baseline_purchase_probability.to_numpy()
+    ite_10 = result_10.ite.to_numpy()
+    ite_20 = result_20.ite.to_numpy()
+    lower = np.maximum.reduce([np.zeros_like(raw_baseline), -ite_10, -ite_20])
+    upper = np.minimum.reduce([np.ones_like(raw_baseline), 1.0 - ite_10, 1.0 - ite_20])
+    if np.any(lower > upper):
+        raise DMLError(
+            "DML effects cannot be combined with a shared probability baseline; "
+            "at least one customer has an effect outside [-1, 1]"
+        )
+    shared_baseline = np.clip(raw_baseline, lower, upper)
     result_10 = replace(
         result_10,
         baseline_purchase_probability=pd.Series(

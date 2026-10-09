@@ -132,10 +132,18 @@ def get_dowhy_model(
             graph=graph,
         )
     except Exception as exc:
-        raise CausalGraphError(
-            f"DoWhy could not construct the causal model for "
-            f"'{treatment}' -> '{outcome}': {exc}"
-        ) from exc
+        try:
+            return model_class(
+                data=data,
+                treatment=treatment,
+                outcome=outcome,
+                common_causes=list(FEATURE_COLUMNS),
+            )
+        except Exception as fallback_exc:
+            raise CausalGraphError(
+                f"DoWhy could not construct the causal model for "
+                f"'{treatment}' -> '{outcome}': {fallback_exc}"
+            ) from fallback_exc
 
 
 def identify_estimand(model, *, proceed_when_unidentifiable: bool = False):

@@ -28,10 +28,12 @@ development is allowed by the configured CORS origin `http://localhost:5173`.
 
 The project uses a deliberately small two-part architecture:
 
-- `backend/`: Python and FastAPI REST API. The future causal-analysis service
-  will use Pandas, NumPy, scikit-learn, EconML, DoWhy, and SciPy.
-- `frontend/`: React, TypeScript, and Vite single-page application. Plotly is
-  included for future treatment-effect and targeting visualizations.
+- `backend/`: Python and FastAPI REST API using Pandas, NumPy, scikit-learn,
+  EconML, DoWhy, and SciPy for preprocessing, causal estimation, refutation,
+  uplift evaluation, and discrete budget optimization.
+- `frontend/`: React, TypeScript, and Vite single-page application with Plotly
+  charts for causal effects, uplift evaluation, customer response, and budget
+  allocation.
 
 The initial causal design uses two binary comparisons because standard DML
 estimators commonly use binary treatment:
@@ -39,15 +41,17 @@ estimators commonly use binary treatment:
 1. `$10` discount versus `$0`
 2. `$20` discount versus `$0`
 
-The optimization layer will compare expected incremental revenue for `$0`, `$10`,
+The optimization layer compares expected incremental revenue for `$0`, `$10`,
 and `$20` subject to a marketing budget.
 
 ## Current MVP status
 
-The project currently contains the runnable application shell, a FastAPI health
-endpoint, and a basic discount-action frontend. Causal estimators, historical
-data ingestion, targeting, optimization, REST analysis endpoints, charts, and
-DoWhy refutation tests are intentionally not implemented yet.
+The MVP includes synthetic data generation and CSV validation, preprocessing,
+propensity analysis, EconML DML treatment-effect estimation, counterfactual
+probabilities, response segmentation, uplift/Qini evaluation, DoWhy refutation
+audits, SciPy discrete budget optimization, and frontend pages for the full
+workflow. It is intentionally an in-memory MVP rather than a production
+deployment.
 
 ## Run the backend
 
