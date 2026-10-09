@@ -194,5 +194,8 @@ def causal_audit() -> dict:
         return {str(discount): audit.to_dict() for discount, audit in audits.items()}
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        logger.exception("Causal audit failed")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

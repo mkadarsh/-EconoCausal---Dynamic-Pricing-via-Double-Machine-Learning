@@ -15,6 +15,7 @@ from app.data.synthetic_data import generate_sample_campaign
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/data", tags=["data"])
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 def _summary() -> DataSummary:
@@ -32,17 +33,20 @@ def _summary() -> DataSummary:
 
 @router.post("/generate", response_model=DataSummary, status_code=status.HTTP_201_CREATED)
 def generate_data(request: GenerateDataRequest) -> DataSummary:
+    path: Path | None = None
     try:
         with NamedTemporaryFile(suffix=".csv", delete=False) as temporary:
             path = Path(temporary.name)
         generate_sample_campaign(str(path), request.n_customers, request.random_seed)
         state.campaign = load_csv(path)
         state.clear_analysis()
-        path.unlink(missing_ok=True)
         return _summary()
     except (ValueError, OSError) as exc:
         logger.exception("Synthetic campaign generation failed")
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
 
 
 @router.post("/upload", response_model=DataSummary, status_code=status.HTTP_201_CREATED)
@@ -51,8 +55,14 @@ async def upload_data(file: UploadFile) -> DataSummary:
         raise HTTPException(status_code=415, detail="Upload must be a CSV file")
     temporary_path: Path | None = None
     try:
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="CSV upload exceeds the 50 MB limit",
+            )
         with NamedTemporaryFile(suffix=".csv", delete=False) as temporary:
-            temporary.write(await file.read())
+            temporary.write(content)
             temporary_path = Path(temporary.name)
         state.campaign = load_csv(temporary_path)
         state.clear_analysis()

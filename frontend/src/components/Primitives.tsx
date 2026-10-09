@@ -9,7 +9,7 @@ export function ChartCard({ title, subtitle, children, action }: { title: string
 export function LoadingState({ label = "Loading analysis…" }: { label?: string }) { return <div className="state-box"><span className="loader" />{label}</div>; }
 export function ErrorState({ message }: { message: string }) { return <div className="state-box error-state"><strong>Unable to load this view</strong><span>{message}</span></div>; }
 export function CustomerSegmentBadge({ segment }: { segment: string }) { return <span className={`segment-badge ${segment.toLowerCase().split(" ").join("-")}`}>{segment}</span>; }
-export function BudgetInput({ value, onChange }: { value: number; onChange: (value: number) => void }) { return <label className="field-label">Marketing budget<input type="number" min="0" value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>; }
+export function BudgetInput({ value, onChange }: { value: number; onChange: (value: number) => void }) { return <label className="field-label">Marketing Budget<input type="number" min="0" value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>; }
 export function FileUpload({ onFile, disabled = false }: { onFile: (file: File) => void; disabled?: boolean }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);

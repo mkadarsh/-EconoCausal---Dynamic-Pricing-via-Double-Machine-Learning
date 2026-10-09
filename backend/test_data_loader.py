@@ -40,3 +40,23 @@ def test_load_csv_rejects_invalid_treatment(tmp_path):
 
     with pytest.raises(ValueError, match="Invalid treatment"):
         load_csv(out)
+
+
+def test_load_csv_rejects_empty_and_non_finite_data(tmp_path):
+    from app.data.data_loader import load_csv
+
+    empty = tmp_path / "empty.csv"
+    empty.write_text(
+        "customer_id,age,income,previous_purchases,website_visits,customer_tenure,"
+        "previous_spend,engagement_score,treatment,discount_amount,purchase,revenue\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="at least one row"):
+        load_csv(empty)
+
+    out = tmp_path / "infinite.csv"
+    generate_sample_campaign(str(out), n_customers=10, random_seed=1)
+    frame = out.read_text(encoding="utf-8").replace(",0.0,", ",inf,", 1)
+    out.write_text(frame, encoding="utf-8")
+    with pytest.raises(ValueError, match="finite"):
+        load_csv(out)
