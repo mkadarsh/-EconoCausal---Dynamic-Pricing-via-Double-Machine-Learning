@@ -86,6 +86,7 @@ export interface OptimizationResponse {
 }
 
 export interface Api {
+  getHealth(): Promise<{ status: string; service: string }>;
   getSummary(): Promise<DataSummary>;
   generateData(n_customers?: number): Promise<DataSummary>;
   uploadData(file: File): Promise<DataSummary>;
@@ -111,6 +112,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api: Api = {
+  getHealth: () => request<{ status: string; service: string }>("/health"),
   getSummary: () => request<DataSummary>("/data/summary"),
   generateData: (n_customers = 5000) =>
     request<DataSummary>("/data/generate", {
