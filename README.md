@@ -1,249 +1,416 @@
 # EconoCausal
 
-EconoCausal is an MVP causal AI platform for dynamic promotional pricing. It
-will estimate whether a `$10` or `$20` discount causes an incremental purchase
-relative to no discount, identify persuadable customers, and allocate a fixed
-marketing budget.
+EconoCausal is a working MVP for causal promotional pricing. It helps a
+marketing team estimate whether a discount is likely to cause an incremental
+purchase, rather than only predicting which customers are likely to buy.
 
-## REST API workflow
+The MVP compares three actions:
 
-The FastAPI backend keeps the current campaign and analysis outputs in memory
-for the MVP. The frontend can use this sequence:
+- `$0` — no discount
+- `$10` — ten-dollar discount
+- `$20` — twenty-dollar discount
 
-1. `POST /api/data/generate` or `POST /api/data/upload`
-2. `GET /api/data/summary`
-3. `POST /api/causal/train`
-4. `GET /api/causal/results` or `GET /api/causal/customer/{customer_id}`
-5. `GET /api/causal/uplift`, `GET /api/causal/propensity`, and
-   `GET /api/causal/audit`
-6. `POST /api/optimization/run`
-7. `GET /api/optimization/results`
+It estimates the `$10 vs $0` and `$20 vs $0` contrasts independently, then
+uses the estimates to segment customers and allocate a fixed marketing budget.
+The application is intentionally small, local, and in-memory: it is designed
+for experimentation and learning, not production deployment.
 
-`GET /api/health` is available independently. The API returns `409` when a
-workflow prerequisite has not run, `422` for invalid data or model inputs, and
-`503` when an optional causal dependency is unavailable. Local React
-development is allowed by the configured CORS origin `http://localhost:5173`.
+## Overview
+
+Traditional campaign targeting often uses a predictive model to answer:
+
+> Who is likely to purchase?
+
+That answer is useful, but it does not answer:
+
+> Who is more likely to purchase because we offered a discount?
+
+EconoCausal addresses the second question with observational causal modeling.
+Customer characteristics influence both promotion assignment and purchase in
+the synthetic campaign data, creating a realistic confounding problem. The
+backend adjusts for measured pre-treatment characteristics and produces
+customer-level treatment-effect estimates, counterfactual purchase
+probabilities, uplift curves, causal robustness checks, and budget-constrained
+recommendations.
+
+## Predictive AI vs Causal AI
+
+Predictive AI estimates an outcome such as:
+
+```text
+P(purchase = 1 | customer characteristics)
+```
+
+This is a forecast of what may happen under the observed or typical campaign
+conditions. A high-probability customer may purchase without receiving any
+promotion.
+
+Causal AI estimates a contrast between potential outcomes:
+
+```text
+ITE_10 = P(purchase | do(discount = $10)) - P(purchase | do(discount = $0))
+ITE_20 = P(purchase | do(discount = $20)) - P(purchase | do(discount = $0))
+```
+
+An Individual Treatment Effect (ITE) estimates the incremental response for a
+customer. It can identify:
+
+- **Persuadable customers** whose purchase probability increases meaningfully
+  with a discount.
+- **Sure buyers** who have a high baseline probability and little estimated
+  incremental response.
+- **Unlikely buyers** who have a low baseline probability and little response.
+- **Potential negative response** customers whose estimated effect is negative.
+
+An ITE is an estimate, not a guarantee of an individual customer's behavior.
+
+## Key Features
+
+- **Causal DAG** describing observed confounders, treatment, purchase, and
+  revenue relationships.
+- **Propensity score analysis** with logistic treatment-assignment models,
+  common-support statistics, and nearest-neighbor matching.
+- **Double Machine Learning** using EconML `LinearDML` for two binary
+  treatment contrasts.
+- **Individual Treatment Effects** for `$10 vs $0` and `$20 vs $0`.
+- **Counterfactual purchase probabilities** for no discount, `$10`, and `$20`.
+- **Uplift analysis** ranked by estimated customer response.
+- **Qini curves** and cumulative incremental-gain curves with random-targeting
+  baselines.
+- **DoWhy refutation tests**, including placebo, random common cause, and
+  subset checks where supported by the installed version.
+- **Budget optimization** using an exact discrete mixed-integer optimization
+  formulation.
+- **Personalized discount allocation** with one action per customer and a
+  total discount-cost constraint.
+- **React/Plotly dashboard** for data upload, causal analysis, customer
+  insights, optimization, and audit results.
+- **Data drift architecture/limitations:** the code has a clean validation and
+  preprocessing boundary where drift monitoring can be added, but automated
+  production drift detection, alerting, and retraining are not implemented in
+  this MVP.
 
 ## Architecture
 
-The project uses a deliberately small two-part architecture:
+```text
+                    Local browser
+                         |
+                         | REST/JSON, multipart CSV upload
+                         v
+             +---------------------------+
+             | React + TypeScript + Vite |
+             | Plotly dashboard          |
+             +-------------+-------------+
+                           |
+                           v
+             +---------------------------+
+             | FastAPI REST API          |
+             | In-memory application     |
+             | state and workflow routes |
+             +-------------+-------------+
+                           |
+          +----------------+----------------+
+          |                                 |
+          v                                 v
+ +----------------------+        +----------------------+
+ | Data and preprocessing|        | Causal analysis      |
+ | CSV validation        |        | DAG / propensity     |
+ | synthetic generator   |        | EconML DML / ITE     |
+ +----------+-----------+        | uplift / DoWhy audit |
+            |                    +----------+-----------+
+            |                               |
+            +---------------+---------------+
+                            v
+                 +--------------------------+
+                 | Discrete optimization    |
+                 | SciPy MILP               |
+                 | $0 / $10 / $20 allocation|
+                 +--------------------------+
+```
 
-- `backend/`: Python and FastAPI REST API using Pandas, NumPy, scikit-learn,
-  EconML, DoWhy, and SciPy for preprocessing, causal estimation, refutation,
-  uplift evaluation, and discrete budget optimization.
-- `frontend/`: React, TypeScript, and Vite single-page application with Plotly
-  charts for causal effects, uplift evaluation, customer response, and budget
-  allocation.
+The backend keeps the current dataset and analysis results in memory. Uploading
+or generating a new dataset clears downstream model, audit, and optimization
+results.
 
-The initial causal design uses two binary comparisons because standard DML
-estimators commonly use binary treatment:
+## Technology Stack
 
-1. `$10` discount versus `$0`
-2. `$20` discount versus `$0`
+### Frontend
 
-The optimization layer compares expected incremental revenue for `$0`, `$10`,
-and `$20` subject to a marketing budget.
+- React 18
+- TypeScript
+- Vite
+- `react-plotly.js`
+- `plotly.js-dist-min`
 
-## Current MVP status
+### Backend
 
-The MVP includes synthetic data generation and CSV validation, preprocessing,
-propensity analysis, EconML DML treatment-effect estimation, counterfactual
-probabilities, response segmentation, uplift/Qini evaluation, DoWhy refutation
-audits, SciPy discrete budget optimization, and frontend pages for the full
-workflow. It is intentionally an in-memory MVP rather than a production
-deployment.
+- Python
+- FastAPI
+- Uvicorn
+- Pydantic Settings
+- Pandas
+- NumPy
 
-## Run the backend
+### Causal ML
+
+- scikit-learn
+- EconML
+- DoWhy
+
+### Optimization
+
+- SciPy `milp`
+- SciPy sparse constraint matrices
+
+### Visualization
+
+- Plotly charts in the React dashboard
+- Plotly-ready uplift, Qini, propensity, and allocation data from the API
+
+## Dataset
+
+The synthetic generator writes `data/sample_campaign_data.csv`. Uploaded CSV
+files must contain the following columns:
+
+| Column | Description |
+|---|---|
+| `customer_id` | Unique customer identifier retained for result mapping and excluded from ML features. |
+| `age` | Customer age. |
+| `income` | Customer income estimate. |
+| `previous_purchases` | Historical number of purchases. |
+| `website_visits` | Historical website visit count. |
+| `customer_tenure` | Customer tenure in the synthetic campaign period. |
+| `previous_spend` | Historical customer spend. |
+| `engagement_score` | Synthetic engagement measure derived from customer activity and noise. |
+| `treatment` | Observed discount action: `0`, `10`, or `20`. |
+| `discount_amount` | Discount amount; must match `treatment`. |
+| `purchase` | Binary purchase outcome: `0` or `1`. |
+| `revenue` | Observed revenue for the campaign observation. |
+
+The generator intentionally makes engagement, purchase history, income, and
+other characteristics affect both promotion assignment and purchase. This
+creates confounding rather than a completely randomized treatment.
+
+The causal pipeline creates two filtered binary datasets:
+
+1. `$10 vs $0`, excluding `$20` observations.
+2. `$20 vs $0`, excluding `$10` observations.
+
+## Causal Assumptions
+
+The estimates depend on assumptions that cannot be proven by the application:
+
+- **Observed confounders:** age, income, previous purchases, website visits,
+  customer tenure, previous spend, and engagement score are treated as
+  pre-treatment variables that may influence both discount assignment and
+  purchase.
+- **Treatment:** each binary contrast represents receiving a specific discount
+  versus receiving no discount.
+- **Outcome:** the primary causal outcome is binary `purchase`.
+- **Consistency:** the recorded discount corresponds to a well-defined
+  intervention.
+- **Positivity/overlap:** comparable customers must have a non-zero chance of
+  receiving each treatment level.
+- **No interference:** one customer's discount does not affect another
+  customer's purchase outcome.
+- **Conditional exchangeability:** after adjusting for the observed covariates,
+  treatment assignment is assumed independent of potential outcomes.
+
+The data is observational and the synthetic data-generating process is only an
+example. Unobserved confounding, selection bias, measurement error,
+misspecified models, poor overlap, and treatment interference can invalidate
+the estimates. DoWhy refutation tests are robustness checks, not proof of
+causal identification.
+
+## Installation
+
+### Backend setup
 
 From the repository root in PowerShell:
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r backend\requirements.txt
-uvicorn app.main:app --app-dir backend --reload
+python -m pip install --upgrade pip
+python -m pip install -r backend\requirements.txt
 ```
 
-The backend runs at <http://127.0.0.1:8000>. API documentation is at
-<http://127.0.0.1:8000/docs>, and the health check is at
-<http://127.0.0.1:8000/api/health>.
+If PowerShell execution policy prevents activation, run commands with the
+environment's interpreter directly:
 
-## Run the frontend
+```powershell
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+```
+
+### Frontend setup
 
 In a second terminal:
 
 ```powershell
-cd frontend
+Set-Location frontend
 npm install
-npm run dev
 ```
 
-The frontend runs at <http://localhost:5173>.
+## Running the Project
 
-## Expected historical data
-
-The planned input data will have one customer-level observation per row with:
-
-`customer_id`, `age`, `income`, `previous_purchases`, `website_visits`,
-`customer_tenure`, `previous_spend`, `engagement_score`, `treatment`,
-`discount_amount`, `purchase`, and `revenue`.
-
-Treatment actions are `$0`, `$10`, and `$20`, represented by the discount amount.
-
-## Generate and validate sample data
-
-The committed sample campaign is generated with:
+Start the backend from the repository root:
 
 ```powershell
 $env:PYTHONPATH = "backend"
-python -m app.data.synthetic_data --out data\sample_campaign_data.csv --n 5000 --seed 42
+python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
 ```
 
-To validate a CSV from Python:
+The backend is available at <http://127.0.0.1:8000>.
 
-```python
-from app.data.data_loader import load_csv
+Start the frontend in a second terminal:
 
-campaign = load_csv("data/sample_campaign_data.csv")
+```powershell
+Set-Location frontend
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-## Causal DAG
+The frontend is available at <http://127.0.0.1:5173>.
 
-The DoWhy graph in
-[backend/app/causal/dag.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/dag.py>)
-represents each binary treatment contrast produced by preprocessing:
+The frontend uses `http://localhost:8000/api` by default. To point it at
+another backend:
 
-- `T10`: a `$10` discount versus `$0`
-- `T20`: a `$20` discount versus `$0`
-- `purchase`: the primary causal outcome
-- `revenue`: a downstream outcome of purchase
-- observed confounders: `age`, `income`, `previous_purchases`,
-  `website_visits`, `customer_tenure`, `previous_spend`, and
-  `engagement_score`
+```powershell
+$env:VITE_API_BASE_URL = "http://127.0.0.1:8000/api"
+npm run dev
+```
 
-The observed customer attributes point to both treatment assignment and
-purchase. This encodes the adjustment set used for identification without
-inventing unsupported relationships. The DAG assumes these features are
-pre-treatment, sufficiently capture common causes, and that both treatment
-levels have overlap. Because the campaign is observational, unmeasured
-confounding, treatment-selection bias, measurement error, and the synthetic
-data-generating assumptions remain limitations; DoWhy identification does not
-prove those assumptions are true.
+FastAPI's interactive documentation is available at
+<http://127.0.0.1:8000/docs>.
 
-## Propensity scores and matching
+## Demo Workflow
 
-[backend/app/causal/propensity.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/propensity.py>)
-fits a scikit-learn logistic regression for each binary contrast (`$10` vs
-`$0` and `$20` vs `$0`). It returns customer-level propensity scores,
-treated/control summaries, common-support statistics, plotting-ready score
-distributions, and one-to-one nearest-neighbor matches.
+1. Open the dashboard at <http://127.0.0.1:5173>.
+2. Open **Data Upload**.
+3. Click **Generate Demo Dataset**, or upload a CSV matching the required
+   schema.
+4. Review row count, columns, missing values, treatment distribution,
+   purchase rate, and validation errors.
+5. Open **Causal Analysis** and run the causal models.
+6. Review ATE, ITE distributions, counterfactual probabilities, segments, and
+   customer-level estimates.
+7. Review uplift and Qini curves, including the random-targeting baseline.
+8. Open **Causal Audit** and inspect the returned DoWhy refutation results and
+   limitations.
+9. Open **Budget Optimization**, set the marketing budget and expected order
+   value, and optionally set a maximum number of targeted customers.
+10. Run optimization and review the recommended `$0`, `$10`, or `$20` action
+    for each customer.
 
-Matching balances the observed covariates represented in the propensity model.
-It does not guarantee elimination of unobserved confounding or establish that
-the observational assumptions are correct.
+## API Documentation
 
-## Double Machine Learning
+All application endpoints are prefixed with `/api`.
 
-[backend/app/causal/dml.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/dml.py>)
-fits separate EconML `LinearDML` models for `$10` versus `$0` and `$20` versus
-`$0`. Random-forest outcome nuisance models and logistic treatment nuisance
-models are cross-fitted by EconML. The result includes customer-level `ITE_10`
-or `ITE_20`, their average treatment effect, effect-distribution summaries,
-optional confidence intervals, and model metadata. `train_dml_models` combines
-both outputs into a customer-mappable table with `customer_id`, `ITE_10`, and
-`ITE_20`.
+### Health
 
-DML relies on consistency, no interference between customers, positivity
-(overlap), and conditional exchangeability given the observed pre-treatment
-features. Cross-fitting reduces overfitting bias in nuisance estimation but
-does not validate these causal assumptions or remove unobserved confounding.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Check that the backend is available. |
 
-### Counterfactual purchase probabilities
+### Data
 
-`train_dml_models` also returns one row per customer with:
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/data/generate` | Generate and load a synthetic campaign dataset. |
+| `POST` | `/api/data/upload` | Upload and validate a campaign CSV as multipart form data. |
+| `GET` | `/api/data/summary` | Return row count, columns, treatment counts, and purchase rate. |
 
-- `baseline_purchase_probability`: a RandomForestClassifier estimate of
-  purchase under the observed covariates and `$0`, trained on the control arm.
-- `purchase_probability_10` and `purchase_probability_20`: an MVP
-  counterfactual approximation defined as
-  `clip(baseline_purchase_probability + ITE, 0, 1)`.
-- `ITE_10` and `ITE_20`: EconML causal effect estimates.
+### Causal analysis
 
-This construction is intentionally separate from ordinary predictive
-probabilities: the increment comes from DML, not from a raw treated/control
-mean or correlation. Clipping keeps the approximation in the probability
-domain, but it does not make an ITE a guaranteed individual outcome. The
-probabilities describe model-based expected potential outcomes under the
-assumptions above, not certainty about what a particular customer would do.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/causal/train` | Preprocess data and train the `$10 vs $0` and `$20 vs $0` DML models. |
+| `GET` | `/api/causal/summary` | Return model status, ATEs, counts, intervals, and metadata. |
+| `GET` | `/api/causal/results` | Return customer-level probabilities and ITEs. |
+| `GET` | `/api/causal/customer/{customer_id}` | Return one customer's profile, estimates, segment, and recommendation. |
+| `GET` | `/api/causal/segments` | Return customer response segments and segment statistics. |
+| `GET` | `/api/causal/uplift` | Return uplift, Qini, cumulative-gain, and random-baseline chart data. |
+| `GET` | `/api/causal/propensity` | Return propensity scores, overlap, and matching statistics. |
+| `GET` | `/api/causal/audit` | Run and return DoWhy refutation results for both contrasts. |
 
-## Customer response segmentation
+### Optimization
 
-[backend/app/causal/uplift.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/uplift.py>)
-classifies the counterfactual output into descriptive response groups:
-`Persuadable`, `Sure Buyer`, `Unlikely Buyer`, `Potential Negative Response`,
-or `Unclassified Response` when configured rules do not provide enough evidence
-for one of the primary groups. Thresholds are defined in
-[backend/app/causal/uplift_config.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/uplift_config.py>)
-and can be supplied through `SegmentationConfig`.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/optimization/run` | Allocate discrete discount actions under a budget. |
+| `GET` | `/api/optimization/results` | Retrieve the latest allocation and campaign summary. |
 
-Classification is rule-based on estimated probabilities and ITEs. Negative
-effects take precedence, followed by sure buyers, persuadable customers, and
-unlikely buyers, so overlapping boundary cases are deterministic. These
-segments describe model estimates, not guaranteed individual behavior.
+Prerequisite failures return an appropriate `4xx` response. Invalid data and
+model inputs return `422`, missing workflow prerequisites generally return
+`404` or `409`, and unavailable optional causal dependencies return `503`.
 
-## Budget optimization
+## Testing
 
-[backend/app/optimization/budget_optimizer.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/optimization/budget_optimizer.py>)
-assigns at most one discrete action (`$0`, `$10`, or `$20`) to each customer.
-It solves a mixed-integer optimization problem, maximizing total estimated net
-value under the marketing budget rather than pretending the action space is
-continuous. For each action:
+### Backend tests
 
-`expected_incremental_revenue = ITE * expected_order_value`
+From the repository root:
 
-and:
+```powershell
+$env:PYTHONPATH = "backend"
+python -m pytest backend -q
+```
 
-`estimated_net_value = expected_incremental_revenue - discount_cost`
+The backend tests cover data generation and validation, preprocessing,
+propensity analysis, DML, DAG construction, uplift and Qini evaluation,
+refutation behavior, optimization constraints, and API prerequisites.
 
-The optimizer returns customer recommendations and budget/value totals. A
-single `discount_cost` column is interpreted as the `$10` cost and twice that
-amount as the `$20` cost; callers can instead provide optional
-`discount_cost_10` and `discount_cost_20` columns for action-specific costs.
-The zero-discount action always has zero cost and zero incremental value.
+To check Python syntax and imports:
 
-## Causal audit and refutation
+```powershell
+python -m compileall -q backend\app
+```
 
-[backend/app/causal/refutation.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/refutation.py>)
-provides DoWhy placebo-treatment, random-common-cause, and data-subset
-refutation checks for both `$10` vs `$0` and `$20` vs `$0`. Each result is
-structured for UI display with a test name, original/refuted effect,
-pass status, interpretation, limitation, status, and any execution error.
+### Frontend type checking and production build
 
-Because DoWhy's support for directly refuting EconML estimators varies by
-version, this adapter refutes a DoWhy backdoor linear-regression estimate
-constructed from the same observed confounders and binary contrast. That is a
-diagnostic companion to the EconML DML result, not a replacement for it.
-Unsupported or failed refuters are returned as `status="unavailable"` with
-`passed=None`; they are never represented as successful tests. Refutation tests
-are sensitivity diagnostics, not mathematical proof that the causal model is
-correct, that unmeasured confounding is absent, or that the DML model is
-superior.
+```powershell
+Set-Location frontend
+npm run build
+```
 
-## Uplift evaluation
+The build runs TypeScript project checking followed by the Vite production
+build. No separate frontend lint script is currently configured.
 
-`evaluate_uplift` in
-[backend/app/causal/uplift.py](</D:/Github Projects/-EconoCausal-- Dynamic Pricing via Double Machine Learning/backend/app/causal/uplift.py>)
-ranks customers by `ITE_10` or `ITE_20` and returns Plotly-ready `x`, `y`, and
-`random_baseline` arrays. The cumulative gain is computed from observed
-treated outcomes minus the observed control outcome rate scaled by the number
-of treated customers encountered in the ranked prefix. This is a standard
-Qini-style observational evaluation and is available for both discount
-contrasts through `evaluate_all_uplift`.
+## Limitations
 
-The area reported is the trapezoidal area between the ranked gain curve and
-the random-targeting line; it is descriptive, not a proof of causal-model
-superiority. Interpretation requires consistency, overlap, exchangeability
-given the measured covariates, reliable outcomes, and no interference. In
-particular, a higher curve can reflect sampling noise, model misspecification,
-or residual/unmeasured confounding and should be checked with refutation,
-validation, and holdout evaluation.
+- The MVP uses synthetic data by default and does not represent a real
+  campaign.
+- Uploaded data is observational; causal estimates depend on the assumptions
+  listed above.
+- The two discount levels are modeled as separate binary contrasts rather than
+  with a single native multi-treatment estimator.
+- Counterfactual purchase probabilities are an MVP construction based on a
+  control-arm baseline model plus the estimated ITE, clipped to `[0, 1]`.
+- ITEs and recommendations are estimates, not guarantees of individual
+  behavior or revenue.
+- DoWhy refutation tests can be unavailable or inconclusive depending on data
+  and library compatibility. A passing check does not prove identification.
+- Application state is in memory and is lost when the backend restarts.
+- There is no authentication, authorization, database, job queue, or
+  multi-user isolation.
+- Upload validation has a 50 MB limit but is not a full data-governance or
+  schema-management system.
+- Automated data drift detection, alerting, feature monitoring, and
+  retraining are not implemented.
+- Plotly is bundled into the frontend build, producing a relatively large
+  JavaScript bundle for this MVP.
+
+## Future Improvements
+
+- Integrate real campaign data with documented governance and privacy controls.
+- Use a better native multi-treatment causal estimator or generalized
+  propensity framework.
+- Add a production database and durable analysis-job storage.
+- Add authentication, authorization, tenant isolation, and audit logging.
+- Add a model registry with versioned datasets, models, assumptions, and
+  results.
+- Add automated retraining and model-performance monitoring.
+- Add advanced drift monitoring for features, treatment assignment, outcomes,
+  overlap, and ITE distributions.
+- Add asynchronous jobs for large datasets and long-running refutation tests.
+- Add richer business objectives, inventory constraints, and revenue outcomes.
+- Add CI, frontend linting, end-to-end browser tests, and observability.
+- Deploy the system to a secure cloud environment.
