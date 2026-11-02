@@ -324,6 +324,7 @@ All application endpoints are prefixed with `/api`.
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `POST` | `/api/causal/train` | Preprocess data and train the `$10 vs $0` and `$20 vs $0` DML models. |
+| `GET` | `/api/causal/status` | Return whether causal models are trained without treating the untrained state as an error. |
 | `GET` | `/api/causal/summary` | Return model status, ATEs, counts, intervals, and metadata. |
 | `GET` | `/api/causal/results` | Return customer-level probabilities and ITEs. |
 | `GET` | `/api/causal/customer/{customer_id}` | Return one customer's profile, estimates, segment, and recommendation. |
@@ -337,6 +338,7 @@ All application endpoints are prefixed with `/api`.
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `POST` | `/api/optimization/run` | Allocate discrete discount actions under a budget. |
+| `GET` | `/api/optimization/status` | Return whether an optimization result exists without treating the empty state as an error. |
 | `GET` | `/api/optimization/results` | Retrieve the latest allocation and campaign summary. |
 
 Prerequisite failures return an appropriate `4xx` response. Invalid data and

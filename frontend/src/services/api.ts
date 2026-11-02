@@ -16,6 +16,13 @@ export interface CustomerResult {
   ITE_10: number;
   ITE_20: number;
 }
+export interface CausalStatus {
+  status: "completed" | "not_trained";
+  rows: number;
+}
+export interface OptimizationStatus {
+  status: "completed" | "not_run";
+}
 export interface CustomerDetail {
   customer: CustomerResult;
   profile: { previous_purchases: number; previous_spend: number; engagement_score: number };
@@ -44,7 +51,8 @@ export interface CausalModelSummary {
     ate_upper: number | null;
     treatment_count: number;
     control_count: number;
-    feature_columns: string[];
+    feature_columns?: string[];
+    features?: string[];
     metadata: Record<string, unknown>;
   }>;
 }
@@ -91,6 +99,8 @@ export interface Api {
   generateData(n_customers?: number): Promise<DataSummary>;
   uploadData(file: File): Promise<DataSummary>;
   train(): Promise<{ status: string; models: number[]; rows: number; columns: string[] }>;
+  getCausalStatus(): Promise<CausalStatus>;
+  getOptimizationStatus(): Promise<OptimizationStatus>;
   getResults(): Promise<CustomerResult[]>;
   getCausalSummary(): Promise<CausalModelSummary>;
   getSegments(): Promise<SegmentResponse>;
@@ -126,6 +136,8 @@ export const api: Api = {
     return request<DataSummary>("/data/upload", { method: "POST", body });
   },
   train: () => request("/causal/train", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
+  getCausalStatus: () => request<CausalStatus>("/causal/status"),
+  getOptimizationStatus: () => request<OptimizationStatus>("/optimization/status"),
   getResults: () => request<CustomerResult[]>("/causal/results"),
   getCausalSummary: () => request<CausalModelSummary>("/causal/summary"),
   getSegments: () => request<SegmentResponse>("/causal/segments"),

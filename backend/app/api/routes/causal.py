@@ -62,6 +62,16 @@ def train_models(request: TrainRequest) -> TrainResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/status", response_model=dict[str, object])
+def causal_status() -> dict[str, object]:
+    """Return causal workflow state without treating an untrained model as an error."""
+
+    return {
+        "status": "completed" if state.dml_results and state.ite_results is not None else "not_trained",
+        "rows": len(state.ite_results) if state.ite_results is not None else 0,
+    }
+
+
 @router.get("/results", response_model=list[CustomerResult])
 def causal_results() -> list[dict]:
     if state.ite_results is None:

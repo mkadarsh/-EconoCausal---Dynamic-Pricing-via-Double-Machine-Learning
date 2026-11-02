@@ -23,6 +23,8 @@ def reset_state():
 
 def test_health_and_empty_data_summary():
     assert client.get("/api/health").status_code == 200
+    assert client.get("/api/causal/status").json()["status"] == "not_trained"
+    assert client.get("/api/optimization/status").json()["status"] == "not_run"
     response = client.get("/api/data/summary")
     assert response.status_code == 200
     assert response.json()["has_data"] is False

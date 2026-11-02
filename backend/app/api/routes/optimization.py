@@ -15,6 +15,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/optimization", tags=["optimization"])
 
 
+@router.get("/status", response_model=dict[str, object])
+def optimization_status() -> dict[str, object]:
+    """Return optimization state without treating an empty state as an error."""
+
+    return {
+        "status": "completed" if state.optimization_result is not None else "not_run",
+    }
+
+
 def _recommendation_records(result) -> list[dict]:
     recommendations = result.recommendations.copy()
     if state.ite_results is not None:

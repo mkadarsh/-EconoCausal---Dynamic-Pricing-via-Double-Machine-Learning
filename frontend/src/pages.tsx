@@ -21,14 +21,16 @@ function WorkflowStage({ index, label, status }: { index: number; label: string;
 
 export function Dashboard({ navigate }: { navigate: (page: string) => void }) {
   const summaryRequest = useRequest<DataSummary>(() => api.getSummary());
-  const resultsRequest = useRequest<CustomerResult[]>(api.getResults, Boolean(summaryRequest.data?.has_data));
+  const statusRequest = useRequest(api.getCausalStatus);
+  const optimizationStatusRequest = useRequest(api.getOptimizationStatus);
+  const modelReady = statusRequest.data?.status === "completed";
+  const resultsRequest = useRequest<CustomerResult[]>(api.getResults, modelReady);
   const segmentsRequest = useRequest<SegmentResponse>(api.getSegments, Boolean(resultsRequest.data));
-  const optimizationRequest = useRequest<OptimizationResponse>(api.getOptimizationResults, Boolean(resultsRequest.data));
+  const optimizationRequest = useRequest<OptimizationResponse>(api.getOptimizationResults, optimizationStatusRequest.data?.status === "completed");
   const auditRequest = useRequest<Record<string, unknown>>(api.getAudit, Boolean(resultsRequest.data));
   const data = summaryRequest.data;
   const results = resultsRequest.data ?? [];
-  const modelReady = Boolean(resultsRequest.data);
-  const anyLoading = summaryRequest.loading || (Boolean(data?.has_data) && resultsRequest.loading);
+  const anyLoading = summaryRequest.loading || statusRequest.loading || (modelReady && resultsRequest.loading);
   if (summaryRequest.loading) return <LoadingState label="Loading dashboard data…" />;
   if (summaryRequest.error && !data) return <ErrorState message={summaryRequest.error} />;
 
@@ -37,7 +39,7 @@ export function Dashboard({ navigate }: { navigate: (page: string) => void }) {
   const stageStatus = (ready: boolean, loading: boolean, error: string, prerequisite: boolean): StageStatus =>
     loading ? "Running" : error ? "Error" : ready ? "Completed" : prerequisite ? "Not Started" : "Not Started";
   const datasetStatus: StageStatus = data?.has_data ? "Completed" : "Not Started";
-  const modelStatus = stageStatus(modelReady, resultsRequest.loading, resultsRequest.error, Boolean(data?.has_data));
+  const modelStatus = stageStatus(modelReady, statusRequest.loading, statusRequest.error, Boolean(data?.has_data));
   const validationStatus = stageStatus(Boolean(auditRequest.data), auditRequest.loading, auditRequest.error, modelReady);
   const optimizationStatus = stageStatus(Boolean(optimization), optimizationRequest.loading, optimizationRequest.error, modelReady);
   const segmentStats = segmentsRequest.data?.statistics ?? [];
@@ -104,12 +106,14 @@ function DatasetSummary({ summary }: { summary: DataSummary }) { return <section
 export function CausalPage({ navigate }: { navigate: (page: string) => void }) {
   const [status, setStatus] = useState(""); const [error, setError] = useState(""); const [refresh, setRefresh] = useState(0);
   const run = () => { setStatus("Training…"); setError(""); api.train().then(() => { setStatus("Models trained"); setRefresh((value) => value + 1); }).catch((e) => { setError(e.message); setStatus(""); }); };
-  const summaryRequest = useRequest<CausalModelSummary>(() => api.getCausalSummary(), true, refresh);
-  const resultsRequest = useRequest<CustomerResult[]>(() => api.getResults(), true, refresh);
-  const segmentsRequest = useRequest<SegmentResponse>(() => api.getSegments(), true, refresh);
+  const statusRequest = useRequest(api.getCausalStatus, true, refresh);
+  const trained = statusRequest.data?.status === "completed";
+  const summaryRequest = useRequest<CausalModelSummary>(() => api.getCausalSummary(), trained, refresh);
+  const resultsRequest = useRequest<CustomerResult[]>(() => api.getResults(), trained, refresh);
+  const segmentsRequest = useRequest<SegmentResponse>(() => api.getSegments(), trained, refresh);
   const upliftRequest = useRequest<Record<string, UpliftEvaluation>>(api.getUplift, Boolean(resultsRequest.data), refresh);
-  if (summaryRequest.loading || resultsRequest.loading) return <LoadingState label="Loading causal analysis…" />;
-  const notTrained = summaryRequest.error || resultsRequest.error;
+  if (statusRequest.loading || (trained && (summaryRequest.loading || resultsRequest.loading))) return <LoadingState label="Loading causal analysis…" />;
+  const notTrained = statusRequest.error || !trained || summaryRequest.error || resultsRequest.error;
   if (notTrained && !summaryRequest.data) return <PageHeader eyebrow="CAUSAL ANALYSIS" title="Estimate incremental impact" subtitle="Train the two binary discount models to unlock treatment effects and counterfactual probabilities." action={<button className="primary-button" onClick={run} disabled={status === "Training…"}>{status || "Train causal models"}</button>}><div className="empty-dashboard"><strong>Causal model not trained</strong><span>{error || "No customer-level results are available yet. Load a validated dataset before training."}</span></div>{error && <ErrorState message={error} />}</PageHeader>;
   const rows = resultsRequest.data ?? [];
   const models = summaryRequest.data?.models ?? {};
@@ -155,12 +159,14 @@ function UpliftChart({ discount, title, explanation, curve }: { discount: number
 }
 
 export function CustomerPage({ navigate }: { navigate: (page: string) => void }) {
-  const { data, loading, error } = useRequest<CustomerResult[]>(api.getResults);
+  const statusRequest = useRequest(api.getCausalStatus);
+  const optimizationStatusRequest = useRequest(api.getOptimizationStatus);
+  const { data, loading, error } = useRequest<CustomerResult[]>(api.getResults, statusRequest.data?.status === "completed");
   const { data: segments } = useRequest<SegmentResponse>(api.getSegments, Boolean(data));
-  const { data: optimization } = useRequest<OptimizationResponse>(api.getOptimizationResults, Boolean(data));
+  const { data: optimization } = useRequest<OptimizationResponse>(api.getOptimizationResults, optimizationStatusRequest.data?.status === "completed");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detail = useRequest<CustomerDetail>(() => api.getCustomer(selectedId ?? ""), Boolean(selectedId));
-  if (loading) return <LoadingState label="Loading customer effects…" />; if (error) return <ErrorState message={error} />;
+  if (statusRequest.loading || loading) return <LoadingState label="Loading customer effects…" />; if (statusRequest.error || error) return <ErrorState message={statusRequest.error || error} />;
   return <PageHeader eyebrow="CUSTOMER INSIGHTS" title="Who should receive an offer?" subtitle="Search, filter, and inspect model-based customer response estimates." action={<button className="secondary-button" onClick={() => navigate("optimization")}>Open budget optimizer →</button>}><CustomerInsightsTable rows={data ?? []} segments={segments?.customers ?? []} recommendations={optimization?.recommendations ?? []} onSelect={setSelectedId} /><CustomerDetailPanel detail={detail.data} loading={detail.loading} error={detail.error} /></PageHeader>;
 }
 
@@ -182,6 +188,9 @@ function CustomerDetailPanel({ detail, loading, error }: { detail: CustomerDetai
 
 export function OptimizationPage() {
   const [budget, setBudget] = useState(10000); const [orderValue, setOrderValue] = useState(100); const [maxCustomers, setMaxCustomers] = useState<number | undefined>(); const [result, setResult] = useState<OptimizationResponse | null>(null); const [error, setError] = useState(""); const [loading, setLoading] = useState(false); const [filter, setFilter] = useState("All");
+  const optimizationStatusRequest = useRequest(api.getOptimizationStatus);
+  const existingResultRequest = useRequest(api.getOptimizationResults, optimizationStatusRequest.data?.status === "completed");
+  useEffect(() => { if (existingResultRequest.data) setResult(existingResultRequest.data); }, [existingResultRequest.data]);
   const run = () => { setLoading(true); setError(""); api.runOptimization(budget, orderValue, maxCustomers).then(setResult).catch((e) => setError(e.message)).finally(() => setLoading(false)); };
   const recommendations = result?.recommendations.filter((row) => filter === "All" || String(row.recommended_discount) === filter) ?? [];
   const allocation = [0, 10, 20].map((discount) => (result?.recommendations ?? []).filter((row) => Number(row.recommended_discount) === discount).reduce((sum, row) => sum + Number(row.discount_cost ?? 0), 0));
@@ -190,14 +199,17 @@ export function OptimizationPage() {
 }
 
 export function AuditPage() {
-  const auditRequest = useRequest<Record<string, unknown>>(api.getAudit);
-  const modelRequest = useRequest<CausalModelSummary>(api.getCausalSummary);
-  if (auditRequest.loading || modelRequest.loading) return <LoadingState label="Running causal audit…" />;
-  if (modelRequest.error && !modelRequest.data) return <PageHeader eyebrow="CAUSAL AUDIT" title="Stress-test the estimate" subtitle="Refutation diagnostics challenge assumptions; they do not prove the model is correct."><div className="empty-dashboard"><strong>Causal model not trained</strong><span>Train the causal models before running or reviewing the audit.</span></div></PageHeader>;
+  const statusRequest = useRequest(api.getCausalStatus);
+  const trained = statusRequest.data?.status === "completed";
+  const auditRequest = useRequest<Record<string, unknown>>(api.getAudit, trained);
+  const modelRequest = useRequest<CausalModelSummary>(api.getCausalSummary, trained);
+  if (statusRequest.loading || (trained && (auditRequest.loading || modelRequest.loading))) return <LoadingState label="Running causal audit…" />;
+  if (statusRequest.error || !trained || (modelRequest.error && !modelRequest.data)) return <PageHeader eyebrow="CAUSAL AUDIT" title="Stress-test the estimate" subtitle="Refutation diagnostics challenge assumptions; they do not prove the model is correct."><div className="empty-dashboard"><strong>Causal model not trained</strong><span>Train the causal models before running or reviewing the audit.</span></div></PageHeader>;
   if (auditRequest.error) return <PageHeader eyebrow="CAUSAL AUDIT" title="Stress-test the estimate" subtitle="Refutation diagnostics challenge assumptions; they do not prove the model is correct."><ErrorState message={auditRequest.error} /><div className="info-banner">No refutation result is shown because the backend did not return an audit response.</div></PageHeader>;
   const audits = Object.values(auditRequest.data ?? {}) as AuditRecord[];
   const firstModel = modelRequest.data ? Object.values(modelRequest.data.models)[0] : undefined;
-  return <PageHeader eyebrow="CAUSAL AUDIT" title="Stress-test the estimate" subtitle="Review robustness checks for the two observational discount contrasts."><ChartCard title="Causal model information" subtitle="Configuration returned by the trained backend models"><div className="audit-model-info"><div><span>Treatment</span><strong>$10 vs $0 and $20 vs $0 discount contrasts</strong></div><div><span>Outcome</span><strong>Purchase</strong></div><div><span>Covariates</span><strong>{firstModel?.feature_columns.join(" · ") || "Not returned by backend"}</strong></div><div><span>Number of observations</span><strong>{modelRequest.data?.rows ?? "Not returned by backend"}</strong></div></div></ChartCard><div className="audit-grid">{audits.map((audit) => <AuditCard key={audit.discount_amount} audit={audit} />)}</div><ChartCard title="How to interpret this audit"><div className="audit-explanation"><p>Refutation tests provide robustness checks by perturbing the data or treatment and comparing the resulting estimate.</p><p>They do not prove causal identification. Observational data may contain unobserved confounding that these tests cannot rule out.</p><p>Results depend on the causal assumptions, observed covariates, treatment overlap, estimator, and the dataset used for this run.</p></div></ChartCard></PageHeader>;
+  const covariates = firstModel?.feature_columns ?? firstModel?.features ?? [];
+  return <PageHeader eyebrow="CAUSAL AUDIT" title="Stress-test the estimate" subtitle="Review robustness checks for the two observational discount contrasts."><ChartCard title="Causal model information" subtitle="Configuration returned by the trained backend models"><div className="audit-model-info"><div><span>Treatment</span><strong>$10 vs $0 and $20 vs $0 discount contrasts</strong></div><div><span>Outcome</span><strong>Purchase</strong></div><div><span>Covariates</span><strong>{covariates.join(" · ") || "Not returned by backend"}</strong></div><div><span>Number of observations</span><strong>{modelRequest.data?.rows ?? "Not returned by backend"}</strong></div></div></ChartCard><div className="audit-grid">{audits.map((audit) => <AuditCard key={audit.discount_amount} audit={audit} />)}</div><ChartCard title="How to interpret this audit"><div className="audit-explanation"><p>Refutation tests provide robustness checks by perturbing the data or treatment and comparing the resulting estimate.</p><p>They do not prove causal identification. Observational data may contain unobserved confounding that these tests cannot rule out.</p><p>Results depend on the causal assumptions, observed covariates, treatment overlap, estimator, and the dataset used for this run.</p></div></ChartCard></PageHeader>;
 }
 
 type AuditResult = { test_name?: string; estimated_effect?: number | null; refuted_effect?: number | null; passed?: boolean | null; interpretation?: string; limitations?: string; status?: string; error?: string | null };
