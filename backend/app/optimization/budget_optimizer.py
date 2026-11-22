@@ -192,6 +192,69 @@ def calculate_campaign_summary(
     )
 
 
+def _greedy_allocate(
+    campaign: pd.DataFrame,
+    budget: float,
+    max_customers: int | None,
+) -> OptimizationResult:
+    """Fast allocation fallback for large campaigns with no MILP stall."""
+
+    costs, incremental_revenue, net_value = _build_options(campaign)
+    probabilities = np.column_stack(
+        [
+            campaign["baseline_purchase_probability"].to_numpy(dtype=float),
+            campaign["purchase_probability_10"].to_numpy(dtype=float),
+            campaign["purchase_probability_20"].to_numpy(dtype=float),
+        ]
+    )
+    target_limit = len(campaign) if max_customers is None else min(int(max_customers), len(campaign))
+    actions = np.zeros(len(campaign), dtype=int)
+    chosen_action_index = np.zeros(len(campaign), dtype=int)
+    remaining = budget
+    candidates: list[tuple[float, int, int]] = []
+    for customer in range(len(campaign)):
+        for action_index, action in ((1, 10), (2, 20)):
+            action_cost = float(costs[customer, action_index])
+            action_net = float(net_value[customer, action_index])
+            if action_cost > 0 and action_net > 0:
+                candidates.append((action_net / action_cost, customer, action_index))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    targeted = 0
+    for _, customer, action_index in candidates:
+        if targeted >= target_limit:
+            break
+        if actions[customer] != 0:
+            continue
+        action_cost = float(costs[customer, action_index])
+        if action_cost <= remaining:
+            chosen_action_index[customer] = action_index
+            actions[customer] = (0, 10, 20)[action_index]
+            remaining -= action_cost
+            targeted += 1
+
+    selected_costs = costs[np.arange(len(campaign)), chosen_action_index]
+    recommendations = pd.DataFrame(
+        {
+            "customer_id": campaign["customer_id"].to_numpy(),
+            "recommended_discount": actions,
+            "expected_purchase_probability": probabilities[
+                np.arange(len(campaign)), chosen_action_index
+            ],
+            "expected_incremental_revenue": incremental_revenue[
+                np.arange(len(campaign)), chosen_action_index
+            ],
+            "discount_cost": selected_costs,
+            "estimated_net_value": net_value[
+                np.arange(len(campaign)), chosen_action_index
+            ],
+        }
+    )
+    return OptimizationResult(
+        recommendations=recommendations,
+        summary=calculate_campaign_summary(recommendations, budget),
+    )
+
+
 def optimize_campaign(
     data: pd.DataFrame, budget: float, max_customers: int | None = None
 ) -> OptimizationResult:
@@ -209,9 +272,43 @@ def optimize_campaign(
     campaign = _validate_input(data)
     costs, incremental_revenue, net_value = _build_options(campaign)
     customers, action_count = len(campaign), 3
+    if customers > 1_000:
+        return _greedy_allocate(campaign, total_budget, max_customers)
     variable_count = customers * action_count
     objective = -net_value.ravel()
     target_limit = customers if max_customers is None else min(int(max_customers), customers)
+    if total_budget == 0:
+        target_limit = 0
+    if target_limit == 0:
+        return OptimizationResult(
+            recommendations=pd.DataFrame(
+                {
+                    "customer_id": campaign["customer_id"].to_numpy(),
+                    "recommended_discount": np.zeros(customers, dtype=int),
+                    "expected_purchase_probability": campaign[
+                        "baseline_purchase_probability"
+                    ].to_numpy(dtype=float),
+                    "expected_incremental_revenue": np.zeros(customers, dtype=float),
+                    "discount_cost": np.zeros(customers, dtype=float),
+                    "estimated_net_value": np.zeros(customers, dtype=float),
+                }
+            ),
+            summary=calculate_campaign_summary(
+                pd.DataFrame(
+                    {
+                        "customer_id": campaign["customer_id"].to_numpy(),
+                        "recommended_discount": np.zeros(customers, dtype=int),
+                        "expected_purchase_probability": campaign[
+                            "baseline_purchase_probability"
+                        ].to_numpy(dtype=float),
+                        "expected_incremental_revenue": np.zeros(customers, dtype=float),
+                        "discount_cost": np.zeros(customers, dtype=float),
+                        "estimated_net_value": np.zeros(customers, dtype=float),
+                    }
+                ),
+                total_budget,
+            ),
+        )
     constraint_matrix = lil_matrix((customers + 2, variable_count), dtype=float)
     for customer in range(customers):
         constraint_matrix[customer, customer * action_count : (customer + 1) * action_count] = 1
@@ -226,11 +323,16 @@ def optimize_campaign(
             integrality=np.ones(variable_count),
             bounds=Bounds(np.zeros(variable_count), np.ones(variable_count)),
             constraints=LinearConstraint(constraint_matrix.tocsr(), lower, upper),
-            options={"disp": False},
+            options={
+                "disp": False,
+                "presolve": True,
+                "time_limit": 60.0,
+                "mip_rel_gap": 0.01,
+            },
         )
     except Exception as exc:
         raise BudgetOptimizationError(f"Discrete budget optimization failed: {exc}") from exc
-    if not solution.success or solution.x is None:
+    if solution.x is None:
         raise BudgetOptimizationError(
             f"Discrete budget optimization failed: {solution.message}"
         )

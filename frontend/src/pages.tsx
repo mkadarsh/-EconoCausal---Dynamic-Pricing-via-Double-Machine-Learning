@@ -191,7 +191,16 @@ export function OptimizationPage() {
   const optimizationStatusRequest = useRequest(api.getOptimizationStatus);
   const existingResultRequest = useRequest(api.getOptimizationResults, optimizationStatusRequest.data?.status === "completed");
   useEffect(() => { if (existingResultRequest.data) setResult(existingResultRequest.data); }, [existingResultRequest.data]);
-  const run = () => { setLoading(true); setError(""); api.runOptimization(budget, orderValue, maxCustomers).then(setResult).catch((e) => setError(e.message)).finally(() => setLoading(false)); };
+  const run = () => {
+    setLoading(true);
+    setError("");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 120_000);
+    api.runOptimization(budget, orderValue, maxCustomers, controller.signal)
+      .then(setResult)
+      .catch((e) => setError(e.name === "AbortError" ? "Optimization timed out. Reduce the customer limit or try again." : e.message))
+      .finally(() => { window.clearTimeout(timeout); setLoading(false); });
+  };
   const recommendations = result?.recommendations.filter((row) => filter === "All" || String(row.recommended_discount) === filter) ?? [];
   const allocation = [0, 10, 20].map((discount) => (result?.recommendations ?? []).filter((row) => Number(row.recommended_discount) === discount).reduce((sum, row) => sum + Number(row.discount_cost ?? 0), 0));
   const recommendationColumns: Array<[string, string]> = [["customer_id", "Customer ID"], ["recommended_discount", "Recommended Discount"], ["expected_purchase_probability", "Expected Purchase Probability"], ["ITE", "ITE"], ["expected_incremental_revenue", "Expected Incremental Revenue"], ["discount_cost", "Discount Cost"], ["estimated_net_value", "Expected Net Value"]];

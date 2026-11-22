@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.causal.refutation import (
     RefutationError,
     RefutationResult,
+    _refutation_passed,
     audit_all_refutations,
     audit_refutations,
 )
@@ -57,6 +60,17 @@ def test_invalid_refutation_configuration_is_reported():
         audit_refutations(_campaign(), 10, subset_fraction=1)
     with pytest.raises(RefutationError, match="10 or 20"):
         audit_refutations(_campaign(), 15)
+
+
+def test_dowhy_numpy_significance_maps_to_pass_status():
+    result = SimpleNamespace(
+        refutation_result={
+            "p_value": 0.5,
+            "is_statistically_significant": np.False_,
+        }
+    )
+
+    assert _refutation_passed(result) is True
 
 
 def test_missing_or_incompatible_dowhy_is_explicit():

@@ -128,6 +128,17 @@ def _refuted_effect(refutation: Any) -> float | None:
     return None
 
 
+def _refutation_passed(refutation: Any) -> bool | None:
+    result = getattr(refutation, "refutation_result", None)
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, dict):
+        significant = result.get("is_statistically_significant")
+        if isinstance(significant, (bool, np.bool_)):
+            return not bool(significant)
+    return None
+
+
 def _estimate_effect(model: Any, estimand: Any) -> Any:
     return model.estimate_effect(
         estimand,
@@ -137,18 +148,26 @@ def _estimate_effect(model: Any, estimand: Any) -> Any:
 
 
 def _run_refuter(
+    model: Any,
+    estimand: Any,
     estimate: Any,
     method: str,
     *,
     num_simulations: int,
     subset_fraction: float,
 ) -> Any:
-    kwargs: dict[str, Any] = {"refutation_method": method, "num_simulations": num_simulations}
+    kwargs: dict[str, Any] = {"num_simulations": num_simulations}
     if method == "placebo_treatment_refuter":
         kwargs["placebo_type"] = "permute"
     elif method == "data_subset_refuter":
         kwargs["subset_fraction"] = subset_fraction
-    return estimate.refute_estimate(**kwargs)
+    return model.refute_estimate(
+        estimand,
+        estimate,
+        method_name=method,
+        show_progress_bar=False,
+        **kwargs,
+    )
 
 
 def audit_refutations(
@@ -237,14 +256,15 @@ def audit_refutations(
     for method, test_name in REFUTER_METHODS:
         try:
             refutation = _run_refuter(
+                model,
+                estimand,
                 estimate,
                 method,
                 num_simulations=num_simulations,
                 subset_fraction=subset_fraction,
             )
             refuted_effect = _refuted_effect(refutation)
-            passed_value = getattr(refutation, "refutation_result", None)
-            passed = passed_value if isinstance(passed_value, bool) else None
+            passed = _refutation_passed(refutation)
             results.append(
                 RefutationResult(
                     test_name=test_name,
